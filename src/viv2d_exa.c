@@ -62,16 +62,16 @@
 
 #define VIV2D_MAX_RECTS 256
 
-//#define VIV2D_MSG(fmt, ...)
-#define VIV2D_MSG(fmt, ...) \
+#define VIV2D_MSG(fmt, ...)
+/*#define VIV2D_MSG(fmt, ...) \
 		do { xf86Msg(X_INFO, fmt "\n",\
 				##__VA_ARGS__); } while (0)
-
-//#define VIV2D_FAIL_MSG(fmt, ...)
-#define VIV2D_FAIL_MSG(fmt, ...) \
+*/
+#define VIV2D_FAIL_MSG(fmt, ...)
+/*#define VIV2D_FAIL_MSG(fmt, ...) \
 		do { xf86Msg(X_WARNING, fmt "\n",\
 				##__VA_ARGS__); } while (0)
-
+*/
 
 typedef struct _Viv2DRect {
 	int x1;
