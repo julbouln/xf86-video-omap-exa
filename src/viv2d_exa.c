@@ -710,7 +710,6 @@ static void Viv2DSolid (PixmapPtr pPixmap, int x1, int y1, int x2, int y2) {
 	solidOp->cur_rect++;
 }
 
-#include "write_bmp.h"
 /**
  * DoneSolid() finishes a set of solid fills.
  *
