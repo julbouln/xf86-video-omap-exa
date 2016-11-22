@@ -47,6 +47,10 @@
 
 #include "exa.h"
 
+#include "viv2d.h"
+
+#define VIV2D_STREAM_SIZE 512
+
 #define VIV2D_SOLID 1
 #define VIV2D_COPY 1
 #define VIV2D_COMPOSITE 1
@@ -60,120 +64,12 @@
 //#define VIV2D_MIN_HW_HEIGHT 16
 //#define VIV2D_MIN_HW_SIZE_24BIT (16 * 16)
 
-#define VIV2D_MAX_RECTS 256
-
-#define VIV2D_MSG(fmt, ...)
-/*#define VIV2D_MSG(fmt, ...) \
-		do { xf86Msg(X_INFO, fmt "\n",\
-				##__VA_ARGS__); } while (0)
-*/
-#define VIV2D_FAIL_MSG(fmt, ...)
-/*#define VIV2D_FAIL_MSG(fmt, ...) \
-		do { xf86Msg(X_WARNING, fmt "\n",\
-				##__VA_ARGS__); } while (0)
-*/
-
-//#define VIV2D_ERR_MSG(fmt, ...)
-#define VIV2D_ERR_MSG(fmt, ...) \
-		do { xf86Msg(X_ERROR, fmt "\n",\
-				##__VA_ARGS__); } while (0)
-
-
-
-
-typedef struct _Viv2DRect {
-	int x1;
-	int y1;
-	int x2;
-	int y2;
-} Viv2DRect;
-
-#define STATE_IDLE 0
-#define STATE_WORKING 1
-#define STATE_PENDING 2
-
 typedef struct {
-	void *priv;			/* EXA submodule private data */
-	struct etna_bo *bo;
-	int width;
-	int height;
-	int pitch;
-	Bool tiled;
-} Viv2DPixmapPrivRec, *Viv2DPixmapPrivPtr;
-
-typedef struct _Viv2DSolidOp {
-	int rop;
-	uint32_t fg;
-	uint32_t mask;
-	int cur_rect;
-	Viv2DRect rects[VIV2D_MAX_RECTS];
-} Viv2DSolidOp;
-
-typedef struct _Viv2DCopyOp {
-	int rop;
-	uint32_t mask;
-	int src_fmt;
-	int dst_fmt;
-	Viv2DPixmapPrivPtr src;
-	Viv2DPixmapPrivPtr dst;
-} Viv2DCopyOp;
-
-
-/*
-Raster operation foreground and background codes. Even though ROP is not used in `CLEAR`,
-`HOR_FILTER_BLT`, `VER_FILTER_BLT` and alpha-enabled `BIT_BLTs`, ROP code still has to be
-programmed, because the engine makes the decision whether source, destination and pattern are
-involved in the current operation and the correct decision is essential for the engine to complete
-the operation as expected.
-
-ROP builds a lookup table for a logical operation with 2, 3 or 4 inputs (depending on ROP type). So
-for a ROP3, for example, the ROP pattern will be 2^3=8 bits.
-
-These are the input bit for the ROPs, per ROP type:
-
-`ROP2_PATTERN` [untested]
-    bit 0 destination
-    bit 1 pattern
-
-`ROP2_SOURCE` [untested]
-    bit 0 destination
-    bit 1 source
-
-`ROP3` (uses `ROP_FG` only)
-    bit 0 destination
-    bit 1 source
-    bit 2 pattern
-
-`ROP4` (uses `ROP_FG` and `ROP_BG`)
-    bit 0 destination
-    bit 1 source
-    bit 2 pattern
-    bit "3" foreground/background (`ROP_FG` / `ROP_BG`)
-
-*/
-
-#define ROP_BLACK 				0x00
-#define ROP_NOT_SRC_AND_NOT_DST 0x11
-#define ROP_NOT_SRC_AND_DST 	0x22
-#define ROP_NOT_SRC				0x33
-#define ROP_SRC_AND_NOT_DST 	0x44
-#define ROP_NOT_DST				0x55
-#define ROP_DST_XOR_SRC 		0x66
-#define ROP_NOT_SRC_OR_NOT_DST	0x77
-#define ROP_DST_AND_SRC 		0x88
-#define ROP_NOT_SRC_XOR_DST		0x99
-#define ROP_DST 				0xaa
-#define ROP_NOT_SRC_OR_DST		0xbb
-#define ROP_SRC 				0xcc
-#define ROP_SRC_OR_NOT_DST		0xdd
-#define ROP_DST_OR_SRC 			0xee
-#define ROP_WHITE 				0xff
-
-typedef struct _Viv2DBlendOp {
-	int op;
-	int srcBlendMode;
-	int dstBlendMode;
-} Viv2DBlendOp;
+	OMAPEXARec base;
+	ExaDriverPtr exa;
+	/* add any other driver private data here.. */
+	Viv2DPtr v2d;
+} Viv2DEXARec, *Viv2DEXAPtr;
 
 static const Viv2DBlendOp viv2d_blend_op[] = {
 	{PictOpClear,			DE_BLENDMODE_ZERO, 				DE_BLENDMODE_ZERO},
@@ -192,25 +88,27 @@ static const Viv2DBlendOp viv2d_blend_op[] = {
 	{PictOpSaturate,		DE_BLENDMODE_SATURATED_ALPHA,	DE_BLENDMODE_ONE} // ?
 };
 
-typedef struct _Viv2DPictFormat {
-	int exaFmt;
-	int bpp;
-	unsigned int fmt;
-	int swizzle;
-	int alphaBits;
-} Viv2DPictFormat;
-
-typedef struct _Viv2DCompositeOp {
-	Viv2DBlendOp blendOp;
-	Viv2DPictFormat srcFmt;
-	Viv2DPictFormat dstFmt;
-
-	Viv2DPixmapPrivPtr src;
-	Viv2DPixmapPrivPtr dst;
-
-} Viv2DCompositeOp;
-
 #define NO_PICT_FORMAT -1
+/**
+ * Picture Formats and their counter parts
+ */
+#define VIV2D_PICT_FORMAT_COUNT 8
+static const Viv2DFormat
+viv2d_pict_format[] = {
+	{PICT_a8r8g8b8, 32, DE_FORMAT_A8R8G8B8, DE_SWIZZLE_ARGB, 8},
+	{PICT_x8r8g8b8, 32, DE_FORMAT_X8R8G8B8, DE_SWIZZLE_ARGB, 0},
+	{PICT_a8b8g8r8, 32, DE_FORMAT_A8R8G8B8, DE_SWIZZLE_ABGR, 8},
+	{PICT_x8b8g8r8, 32, DE_FORMAT_X8R8G8B8,	DE_SWIZZLE_ABGR, 0},
+	{PICT_r5g6b5, 16, DE_FORMAT_R5G6B5, DE_SWIZZLE_ARGB, 0},
+	{PICT_a1r5g5b5, 16, DE_FORMAT_A1R5G5B5, DE_SWIZZLE_ARGB, 1},
+	{PICT_x1r5g5b5, 16, DE_FORMAT_X1R5G5B5, DE_SWIZZLE_ARGB, 0},
+	{PICT_a4r4g4b4, 16, DE_FORMAT_A4R4G4B4, DE_SWIZZLE_ARGB, 4},
+	{PICT_x4r4g4b4, 16, DE_FORMAT_X4R4G4B4, DE_SWIZZLE_ARGB, 0},
+//	{PICT_a8, 16, DE_FORMAT_A8, 8},
+	{NO_PICT_FORMAT, 0, 0, 0}
+	/*END*/
+};
+
 
 // for debug
 static const char *
@@ -292,49 +190,6 @@ pix_format_name (pixman_format_code_t format)
 
 	return "<unknown format>";
 };
-/**
- * Picture Formats and their counter parts
- */
-#define VIV2D_PICT_FORMAT_COUNT 8
-static const Viv2DPictFormat
-viv2d_pict_format[] = {
-	{PICT_a8r8g8b8, 32, DE_FORMAT_A8R8G8B8, DE_SWIZZLE_ARGB, 8},
-	{PICT_x8r8g8b8, 32, DE_FORMAT_X8R8G8B8, DE_SWIZZLE_ARGB, 0},
-	{PICT_a8b8g8r8, 32, DE_FORMAT_A8R8G8B8, DE_SWIZZLE_ABGR, 8},
-	{PICT_x8b8g8r8, 32, DE_FORMAT_X8R8G8B8,	DE_SWIZZLE_ABGR, 0},
-	{PICT_r5g6b5, 16, DE_FORMAT_R5G6B5, DE_SWIZZLE_ARGB, 0},
-	{PICT_a1r5g5b5, 16, DE_FORMAT_A1R5G5B5, DE_SWIZZLE_ARGB, 1},
-	{PICT_x1r5g5b5, 16, DE_FORMAT_X1R5G5B5, DE_SWIZZLE_ARGB, 0},
-	{PICT_a4r4g4b4, 16, DE_FORMAT_A4R4G4B4, DE_SWIZZLE_ARGB, 4},
-	{PICT_x4r4g4b4, 16, DE_FORMAT_X4R4G4B4, DE_SWIZZLE_ARGB, 0},
-//	{PICT_a8, 16, DE_FORMAT_A8, 8},
-	{NO_PICT_FORMAT, 0, 0, 0}
-	/*END*/
-};
-
-typedef struct _Viv2DRec {
-	struct etna_device *dev;
-	struct etna_gpu *gpu;
-	struct etna_pipe *pipe;
-	struct etna_cmd_stream *stream;
-
-	Viv2DSolidOp *solid_op;
-	Viv2DCopyOp *copy_op;
-	Viv2DCompositeOp *comp_op;
-
-	struct etna_bo *bo;
-	int width;
-	int height;
-
-} Viv2DRec, *Viv2DPtr;
-
-typedef struct {
-	OMAPEXARec base;
-	ExaDriverPtr exa;
-	/* add any other driver private data here.. */
-	Viv2DPtr v2d;
-} Viv2DEXARec, *Viv2DEXAPtr;
-
 // utils
 
 static inline void etna_emit_load_state(struct etna_cmd_stream *stream,
@@ -408,18 +263,20 @@ static inline unsigned int Viv2DPitch(unsigned width, unsigned bpp)
 }
 
 
-static inline Bool Viv2DFormat(unsigned int depth, unsigned int bpp, uint32_t *fmt)
+static inline Bool Viv2DSetFormat(unsigned int depth, unsigned int bpp, Viv2DFormat *fmt)
 {
+	fmt->bpp=bpp;
+	fmt->swizzle = DE_SWIZZLE_ARGB;
 	switch (bpp) {
 	case 16:
 		if (depth == 15)
-			*fmt = DE_FORMAT_A1R5G5B5;
+			fmt->fmt = DE_FORMAT_A1R5G5B5;
 		else
-			*fmt = DE_FORMAT_R5G6B5;
+			fmt->fmt = DE_FORMAT_R5G6B5;
 		return TRUE;
 		break;
 	case 32:
-		*fmt = DE_FORMAT_A8R8G8B8;
+		fmt->fmt = DE_FORMAT_A8R8G8B8;
 		return TRUE;
 		break;
 	default:
@@ -438,9 +295,21 @@ Viv2DPrivFromPixmap(PixmapPtr pPixmap)
 	return v2d;
 }
 
+
+static Viv2DRec*
+Viv2DPrivFromScreen(ScreenPtr pScreen)
+{
+	Viv2DRec *v2d;
+	Viv2DEXAPtr exa;
+	OMAPPtr pOMAP = OMAPPTR_FROM_SCREEN(pScreen);
+	exa = (Viv2DEXAPtr)(pOMAP->pOMAPEXA);
+	v2d = exa->v2d;
+	return v2d;
+}
+
 static void *
 Viv2DCreatePixmap (ScreenPtr pScreen, int width, int height,
-                   int depth, int usage_hint, int bitsPerPixel,
+                   int depth, int usage_hint, int bitsPePixrel,
                    int *new_fb_pitch)
 {
 	Viv2DPixmapPrivPtr priv = calloc(sizeof(Viv2DPixmapPrivRec), 1);
@@ -451,11 +320,7 @@ static void
 Viv2DDestroyPixmap(ScreenPtr pScreen, void *driverPriv)
 {
 	Viv2DPixmapPrivPtr priv = driverPriv;
-	Viv2DRec *v2d;
-	Viv2DEXAPtr exa;
-	OMAPPtr pOMAP = OMAPPTR_FROM_SCREEN(pScreen);
-	exa = (Viv2DEXAPtr)(pOMAP->pOMAPEXA);
-	v2d = exa->v2d;
+	Viv2DRec *v2d=Viv2DPrivFromScreen(pScreen);
 
 //	VIV2D_MSG("Viv2DDestroyPixmap");
 
@@ -493,7 +358,7 @@ Viv2DModifyPixmapHeader(PixmapPtr pPixmap, int width, int height,
 	depth	= pPixmap->drawable.depth;
 	bitsPerPixel = pPixmap->drawable.bitsPerPixel;
 
-//	pPixmap->devKind = Viv2DPitch(width, bitsPerPixel);
+//	priv->pitch = pPixmap->devKind = Viv2DPitch(width, bitsPerPixel);
 	priv->pitch = pPixmap->devKind = OMAPCalculateStride(width, bitsPerPixel);
 
 	if (pPixData == omap_bo_map(pOMAP->scanout)) {
@@ -612,7 +477,6 @@ static Bool Viv2DPrepareSolid (PixmapPtr pPixmap,
                                int alu, Pixel planemask, Pixel fg) {
 	Viv2DPixmapPrivPtr dst = exaGetPixmapDriverPrivate(pPixmap);
 	Viv2DRec *v2d = Viv2DPrivFromPixmap(pPixmap);
-	uint32_t fmt;
 	uint32_t pitch;
 
 	Viv2DSolidOp *solidOp;
@@ -632,7 +496,7 @@ static Bool Viv2DPrepareSolid (PixmapPtr pPixmap,
 		return FALSE;
 	}
 
-	if (!Viv2DFormat(pPixmap->drawable.depth, pPixmap->drawable.bitsPerPixel, &fmt)) {
+	if (!Viv2DSetFormat(pPixmap->drawable.depth, pPixmap->drawable.bitsPerPixel, &dst->format)) {
 		VIV2D_FAIL_MSG("Viv2DPrepareSolid unsupported format for depth:%d bpp:%d", pPixmap->drawable.depth, pPixmap->drawable.bitsPerPixel);
 		return FALSE;
 	}
@@ -644,43 +508,12 @@ static Bool Viv2DPrepareSolid (PixmapPtr pPixmap,
 
 	solidOp->mask = (uint32_t)planemask;
 
-
 	VIV2D_MSG("Viv2DPrepareSolid %p %dx%d, %x %x %d, %d %d %p", dst,
 	          pPixmap->drawable.width, pPixmap->drawable.height, solidOp->fg ,
 	          solidOp->mask, pPixmap->drawable.depth, alu, pitch, dst);
 
 	solidOp->cur_rect = 0;
 	v2d->solid_op = solidOp;
-
-	etna_set_state_from_bo(v2d->stream, VIVS_DE_DEST_ADDRESS, dst->bo);
-	etna_set_state(v2d->stream, VIVS_DE_DEST_STRIDE, pitch);
-
-	etna_set_state(v2d->stream, VIVS_DE_DEST_ROTATION_CONFIG, 0);
-	etna_set_state(v2d->stream, VIVS_DE_DEST_CONFIG,
-	               VIVS_DE_DEST_CONFIG_FORMAT(fmt) |
-	               VIVS_DE_DEST_CONFIG_SWIZZLE(DE_SWIZZLE_ARGB) |
-	               VIVS_DE_DEST_CONFIG_COMMAND_CLEAR |
-	               VIVS_DE_DEST_CONFIG_TILED_DISABLE |
-	               VIVS_DE_DEST_CONFIG_MINOR_TILED_DISABLE
-	              );
-
-	etna_set_state(v2d->stream, VIVS_DE_ROP,
-	               VIVS_DE_ROP_ROP_FG(ROP_SRC) | VIVS_DE_ROP_ROP_BG(ROP_SRC) | VIVS_DE_ROP_TYPE_ROP4);
-	etna_set_state(v2d->stream, VIVS_DE_CLIP_TOP_LEFT,
-	               VIVS_DE_CLIP_TOP_LEFT_X(0) |
-	               VIVS_DE_CLIP_TOP_LEFT_Y(0)
-	              );
-	etna_set_state(v2d->stream, VIVS_DE_CLIP_BOTTOM_RIGHT,
-	               VIVS_DE_CLIP_BOTTOM_RIGHT_X(pPixmap->drawable.width) |
-	               VIVS_DE_CLIP_BOTTOM_RIGHT_Y(pPixmap->drawable.height)
-	              );
-
-	/* Clear color PE20 */
-	etna_set_state(v2d->stream, VIVS_DE_CLEAR_PIXEL_VALUE32, solidOp->fg );
-	/* Clear color PE10 */
-	etna_set_state(v2d->stream, VIVS_DE_CLEAR_BYTE_MASK, 0xff);
-	etna_set_state(v2d->stream, VIVS_DE_CLEAR_PIXEL_VALUE_LOW, solidOp->fg);
-	etna_set_state(v2d->stream, VIVS_DE_CLEAR_PIXEL_VALUE_HIGH, solidOp->fg);
 
 	return TRUE;
 }
@@ -706,7 +539,6 @@ static Bool Viv2DPrepareSolid (PixmapPtr pPixmap,
  */
 static void Viv2DSolid (PixmapPtr pPixmap, int x1, int y1, int x2, int y2) {
 	Viv2DRec *v2d = Viv2DPrivFromPixmap(pPixmap);
-//	ScrnInfoPtr pScrn = pix2scrn(pPixmap);
 	Viv2DSolidOp *solidOp = v2d->solid_op;
 	if (solidOp->cur_rect < VIV2D_MAX_RECTS)
 	{
@@ -743,8 +575,35 @@ static void Viv2DDoneSolid (PixmapPtr pPixmap) {
 	Viv2DSolidOp *solidOp = v2d->solid_op;
 	int i;
 
-	VIV2D_MSG("Viv2DDoneSolid %d", solidOp->cur_rect);
+	etna_set_state_from_bo(v2d->stream, VIVS_DE_DEST_ADDRESS, dst->bo);
+	etna_set_state(v2d->stream, VIVS_DE_DEST_STRIDE, dst->pitch);
 
+	etna_set_state(v2d->stream, VIVS_DE_DEST_ROTATION_CONFIG, 0);
+	etna_set_state(v2d->stream, VIVS_DE_DEST_CONFIG,
+	               VIVS_DE_DEST_CONFIG_FORMAT(dst->format.fmt) |
+	               VIVS_DE_DEST_CONFIG_SWIZZLE(dst->format.swizzle) |
+	               VIVS_DE_DEST_CONFIG_COMMAND_CLEAR |
+	               VIVS_DE_DEST_CONFIG_TILED_DISABLE |
+	               VIVS_DE_DEST_CONFIG_MINOR_TILED_DISABLE
+	              );
+
+	etna_set_state(v2d->stream, VIVS_DE_ROP,
+	               VIVS_DE_ROP_ROP_FG(ROP_SRC) | VIVS_DE_ROP_ROP_BG(ROP_SRC) | VIVS_DE_ROP_TYPE_ROP4);
+	etna_set_state(v2d->stream, VIVS_DE_CLIP_TOP_LEFT,
+	               VIVS_DE_CLIP_TOP_LEFT_X(0) |
+	               VIVS_DE_CLIP_TOP_LEFT_Y(0)
+	              );
+	etna_set_state(v2d->stream, VIVS_DE_CLIP_BOTTOM_RIGHT,
+	               VIVS_DE_CLIP_BOTTOM_RIGHT_X(dst->width) |
+	               VIVS_DE_CLIP_BOTTOM_RIGHT_Y(dst->height)
+	              );
+
+	/* Clear color PE20 */
+	etna_set_state(v2d->stream, VIVS_DE_CLEAR_PIXEL_VALUE32, solidOp->fg );
+	/* Clear color PE10 */
+	etna_set_state(v2d->stream, VIVS_DE_CLEAR_BYTE_MASK, 0xff);
+	etna_set_state(v2d->stream, VIVS_DE_CLEAR_PIXEL_VALUE_LOW, solidOp->fg);
+	etna_set_state(v2d->stream, VIVS_DE_CLEAR_PIXEL_VALUE_HIGH, solidOp->fg);
 	etna_cmd_stream_reserve(v2d->stream, solidOp->cur_rect * 2 + 2);
 	etna_cmd_stream_emit(v2d->stream,
 	                     VIV_FE_DRAW_2D_HEADER_OP_DRAW_2D | VIV_FE_DRAW_2D_HEADER_COUNT(solidOp->cur_rect) /* render one rectangle */
@@ -758,9 +617,10 @@ static void Viv2DDoneSolid (PixmapPtr pPixmap) {
 		etna_cmd_stream_emit(v2d->stream, VIV_FE_DRAW_2D_BOTTOM_RIGHT_X(rect.x2) |
 		                     VIV_FE_DRAW_2D_BOTTOM_RIGHT_Y(rect.y2));
 	}
+	VIV2D_MSG("Viv2DDoneSolid %d", v2d->stream->offset);
 
-//	etna_cmd_stream_finish(v2d->stream);
-	etna_cmd_stream_flush(v2d->stream);
+	etna_cmd_stream_finish(v2d->stream);
+//	etna_cmd_stream_flush(v2d->stream);
 
 	free(solidOp);
 	v2d->solid_op = NULL;
@@ -815,8 +675,6 @@ static Bool Viv2DPrepareCopy (PixmapPtr pSrcPixmap,
 	Viv2DPixmapPrivPtr src = exaGetPixmapDriverPrivate(pSrcPixmap);
 	Viv2DPixmapPrivPtr dst = exaGetPixmapDriverPrivate(pDstPixmap);
 	Viv2DRec *v2d = Viv2DPrivFromPixmap(pDstPixmap);
-//	ScrnInfoPtr pScrn = pix2scrn(pDstPixmap);
-	uint32_t src_fmt, dst_fmt;
 
 	Viv2DCopyOp *copyOp;
 
@@ -830,11 +688,11 @@ static Bool Viv2DPrepareCopy (PixmapPtr pSrcPixmap,
 		return FALSE;
 	}
 
-	if (!Viv2DFormat(pSrcPixmap->drawable.depth, pSrcPixmap->drawable.bitsPerPixel, &src_fmt)) {
+	if (!Viv2DSetFormat(pSrcPixmap->drawable.depth, pSrcPixmap->drawable.bitsPerPixel, &src->format)) {
 		VIV2D_FAIL_MSG("Viv2DPrepareCopy unsupported format for depth:%d bpp:%d", pSrcPixmap->drawable.depth, pSrcPixmap->drawable.bitsPerPixel);
 		return FALSE;
 	}
-	if (!Viv2DFormat(pDstPixmap->drawable.depth, pDstPixmap->drawable.bitsPerPixel, &dst_fmt)) {
+	if (!Viv2DSetFormat(pDstPixmap->drawable.depth, pDstPixmap->drawable.bitsPerPixel, &dst->format)) {
 		VIV2D_FAIL_MSG("Viv2DPrepareCopy unsupported format for depth:%d bpp:%d", pDstPixmap->drawable.depth, pDstPixmap->drawable.bitsPerPixel);
 		return FALSE;
 	}
@@ -850,10 +708,6 @@ static Bool Viv2DPrepareCopy (PixmapPtr pSrcPixmap,
 
 	copyOp->src = src;
 	copyOp->dst = dst;
-
-	copyOp->src_fmt = src_fmt;
-	copyOp->dst_fmt = dst_fmt;
-
 	v2d->copy_op = copyOp;
 
 	return TRUE;
@@ -887,7 +741,6 @@ static void Viv2DCopy (PixmapPtr pDstPixmap,
                        int srcX,
                        int srcY, int dstX, int dstY, int width, int height) {
 	Viv2DRec *v2d = Viv2DPrivFromPixmap(pDstPixmap);
-//	ScrnInfoPtr pScrn = pix2scrn(pDstPixmap);
 	Viv2DCopyOp *copyOp = v2d->copy_op;
 
 	VIV2D_MSG("Viv2DCopy %p(%dx%d) -> %p(%dx%d) : %dx%d", copyOp->src, srcX, srcY, copyOp->dst, dstX, dstY, width, height);
@@ -896,10 +749,10 @@ static void Viv2DCopy (PixmapPtr pDstPixmap,
 	etna_set_state(v2d->stream, VIVS_DE_SRC_STRIDE, copyOp->src->pitch);
 	etna_set_state(v2d->stream, VIVS_DE_SRC_ROTATION_CONFIG, 0);
 	etna_set_state(v2d->stream, VIVS_DE_SRC_CONFIG,
-	               VIVS_DE_SRC_CONFIG_SOURCE_FORMAT(copyOp->src_fmt) |
-	               VIVS_DE_SRC_CONFIG_SWIZZLE(DE_SWIZZLE_ARGB) |
+	               VIVS_DE_SRC_CONFIG_SOURCE_FORMAT(copyOp->src->format.fmt) |
+	               VIVS_DE_SRC_CONFIG_SWIZZLE(copyOp->src->format.swizzle) |
 	               VIVS_DE_SRC_CONFIG_LOCATION_MEMORY |
-	               VIVS_DE_SRC_CONFIG_PE10_SOURCE_FORMAT(copyOp->src_fmt));
+	               VIVS_DE_SRC_CONFIG_PE10_SOURCE_FORMAT(copyOp->src->format.fmt));
 	etna_set_state(v2d->stream, VIVS_DE_SRC_ORIGIN,
 	               VIVS_DE_SRC_ORIGIN_X(srcX) |
 	               VIVS_DE_SRC_ORIGIN_Y(srcY));
@@ -912,11 +765,11 @@ static void Viv2DCopy (PixmapPtr pDstPixmap,
 //	etna_set_state(v2d->stream, VIVS_DE_STRETCH_FACTOR_LOW, 0);
 //	etna_set_state(v2d->stream, VIVS_DE_STRETCH_FACTOR_HIGH, 0);
 	etna_set_state_from_bo(v2d->stream, VIVS_DE_DEST_ADDRESS, copyOp->dst->bo);
-	etna_set_state(v2d->stream, VIVS_DE_DEST_STRIDE, pDstPixmap->devKind);
+	etna_set_state(v2d->stream, VIVS_DE_DEST_STRIDE, copyOp->dst->pitch);
 	etna_set_state(v2d->stream, VIVS_DE_DEST_ROTATION_CONFIG, 0);
 	etna_set_state(v2d->stream, VIVS_DE_DEST_CONFIG,
-	               VIVS_DE_DEST_CONFIG_FORMAT(copyOp->dst_fmt) |
-	               VIVS_DE_DEST_CONFIG_SWIZZLE(DE_SWIZZLE_ARGB) |
+	               VIVS_DE_DEST_CONFIG_FORMAT(copyOp->dst->format.fmt) |
+	               VIVS_DE_DEST_CONFIG_SWIZZLE(copyOp->dst->format.swizzle) |
 	               VIVS_DE_DEST_CONFIG_COMMAND_BIT_BLT |
 	               VIVS_DE_DEST_CONFIG_TILED_DISABLE |
 	               VIVS_DE_DEST_CONFIG_MINOR_TILED_DISABLE
@@ -934,7 +787,6 @@ static void Viv2DCopy (PixmapPtr pDstPixmap,
 
 	etna_set_state(v2d->stream, VIVS_DE_ALPHA_CONTROL,
 	               VIVS_DE_ALPHA_CONTROL_ENABLE_OFF);
-
 
 	etna_cmd_stream_reserve(v2d->stream, 2 + 2);
 	etna_cmd_stream_emit(v2d->stream,
@@ -966,13 +818,12 @@ static void Viv2DCopy (PixmapPtr pDstPixmap,
 static void Viv2DDoneCopy (PixmapPtr pDstPixmap) {
 	Viv2DPixmapPrivPtr dst = exaGetPixmapDriverPrivate(pDstPixmap);
 	Viv2DRec *v2d = Viv2DPrivFromPixmap(pDstPixmap);
-//	ScrnInfoPtr pScrn = pix2scrn(pDstPixmap);
 	Viv2DCopyOp *copyOp = v2d->copy_op;
 
-//	VIV2D_MSG("Viv2DDoneCopy %d", copyOp->cur_rect);
+	VIV2D_MSG("Viv2DDoneCopy %d", v2d->stream->offset);
 
-//	etna_cmd_stream_finish(v2d->stream);
-	etna_cmd_stream_flush(v2d->stream);
+	etna_cmd_stream_finish(v2d->stream);
+//	etna_cmd_stream_flush(v2d->stream);
 
 	free(copyOp);
 	v2d->copy_op = NULL;
@@ -1007,7 +858,7 @@ GetDrawablePixmap(DrawablePtr pDrawable) {
 	return (PixmapPtr) pDrawable;
 }
 
-static Bool Viv2DGetPictureFormat(int exa_fmt, Viv2DPictFormat *fmt) {
+static Bool Viv2DGetPictureFormat(int exa_fmt, Viv2DFormat *fmt) {
 	int i;
 	Bool isFound = FALSE;
 	int size = VIV2D_PICT_FORMAT_COUNT;
@@ -1080,7 +931,9 @@ Viv2DCheckComposite (int op,
                      PicturePtr pMaskPicture, PicturePtr pDstPicture) {
 	PixmapPtr pSrc = GetDrawablePixmap(pSrcPicture->pDrawable);
 	PixmapPtr pDst = GetDrawablePixmap(pDstPicture->pDrawable);
-	Viv2DCompositeOp compOp;
+
+	Viv2DFormat src_fmt;
+	Viv2DFormat dst_fmt;
 
 	if (pDst == NULL) {
 		return FALSE;
@@ -1107,12 +960,12 @@ Viv2DCheckComposite (int op,
 	}
 
 	/*Format Checks*/
-	if (!Viv2DGetPictureFormat(pSrcPicture->format, &compOp.srcFmt)) {
+	if (!Viv2DGetPictureFormat(pSrcPicture->format, &src_fmt)) {
 		VIV2D_FAIL_MSG("Viv2DCheckComposite unsupported src format %s", pix_format_name(pSrcPicture->format));
 		return FALSE;
 	}
 
-	if (!Viv2DGetPictureFormat(pDstPicture->format, &compOp.dstFmt)) {
+	if (!Viv2DGetPictureFormat(pDstPicture->format, &dst_fmt)) {
 		VIV2D_FAIL_MSG("Viv2DCheckComposite unsupported dst format %s", pix_format_name(pDstPicture->format));
 		return FALSE;
 	}
@@ -1246,12 +1099,12 @@ Viv2DPrepareComposite(int op, PicturePtr pSrcPicture,
 
 	compOp->blendOp = viv2d_blend_op[op];
 
-	if (!Viv2DGetPictureFormat(pSrcPicture->format, &compOp->srcFmt)) {
+	if (!Viv2DGetPictureFormat(pSrcPicture->format, &src->format)) {
 		VIV2D_FAIL_MSG("Viv2DPrepareComposite unsupported src format %s", pix_format_name(pSrcPicture->format));
 		return FALSE;
 	}
 
-	if (!Viv2DGetPictureFormat(pDstPicture->format, &compOp->dstFmt)) {
+	if (!Viv2DGetPictureFormat(pDstPicture->format, &dst->format)) {
 		VIV2D_FAIL_MSG("Viv2DPrepareComposite unsupported dst format %s", pix_format_name(pDstPicture->format));
 		return FALSE;
 	}
@@ -1292,7 +1145,6 @@ static void
 Viv2DComposite(PixmapPtr pDst, int srcX, int srcY, int maskX, int maskY,
                int dstX, int dstY, int width, int height) {
 	Viv2DRec *v2d = Viv2DPrivFromPixmap(pDst);
-//	ScrnInfoPtr pScrn = pix2scrn(pDstPixmap);
 	Viv2DCompositeOp *compOp = v2d->comp_op;
 
 	VIV2D_MSG("Viv2DComposite %dx%d -> %dx%d : %dx%d", srcX, srcY, dstX, dstY, width, height);
@@ -1301,12 +1153,12 @@ Viv2DComposite(PixmapPtr pDst, int srcX, int srcY, int maskX, int maskY,
 	etna_set_state(v2d->stream, VIVS_DE_SRC_STRIDE, compOp->src->pitch);
 	etna_set_state(v2d->stream, VIVS_DE_SRC_ROTATION_CONFIG, 0);
 	etna_set_state(v2d->stream, VIVS_DE_SRC_CONFIG,
-	               VIVS_DE_SRC_CONFIG_SOURCE_FORMAT(compOp->srcFmt.fmt) |
-	               VIVS_DE_SRC_CONFIG_SWIZZLE(compOp->srcFmt.swizzle) |
+	               VIVS_DE_SRC_CONFIG_SOURCE_FORMAT(compOp->src->format.fmt) |
+	               VIVS_DE_SRC_CONFIG_SWIZZLE(compOp->src->format.swizzle) |
 	               VIVS_DE_SRC_CONFIG_LOCATION_MEMORY |
 //	               VIVS_DE_SRC_CONFIG_PACK_PACKED8 |
 //	               VIVS_DE_SRC_CONFIG_TILED_ENABLE |
-	               VIVS_DE_SRC_CONFIG_PE10_SOURCE_FORMAT(compOp->srcFmt.fmt));
+	               VIVS_DE_SRC_CONFIG_PE10_SOURCE_FORMAT(compOp->src->format.fmt));
 	etna_set_state(v2d->stream, VIVS_DE_SRC_ORIGIN,
 	               VIVS_DE_SRC_ORIGIN_X(srcX) |
 	               VIVS_DE_SRC_ORIGIN_Y(srcY));
@@ -1322,8 +1174,8 @@ Viv2DComposite(PixmapPtr pDst, int srcX, int srcY, int maskX, int maskY,
 	etna_set_state(v2d->stream, VIVS_DE_DEST_STRIDE, compOp->dst->pitch);
 	etna_set_state(v2d->stream, VIVS_DE_DEST_ROTATION_CONFIG, 0);
 	etna_set_state(v2d->stream, VIVS_DE_DEST_CONFIG,
-	               VIVS_DE_DEST_CONFIG_FORMAT(compOp->dstFmt.fmt) |
-	               VIVS_DE_DEST_CONFIG_SWIZZLE(compOp->dstFmt.swizzle) |
+	               VIVS_DE_DEST_CONFIG_FORMAT(compOp->dst->format.fmt) |
+	               VIVS_DE_DEST_CONFIG_SWIZZLE(compOp->dst->format.swizzle) |
 	               VIVS_DE_DEST_CONFIG_COMMAND_BIT_BLT |
 	               VIVS_DE_DEST_CONFIG_TILED_DISABLE |
 	               VIVS_DE_DEST_CONFIG_MINOR_TILED_DISABLE
@@ -1402,13 +1254,12 @@ Viv2DComposite(PixmapPtr pDst, int srcX, int srcY, int maskX, int maskY,
 static void Viv2DDoneComposite (PixmapPtr pDst) {
 	Viv2DRec *v2d = Viv2DPrivFromPixmap(pDst);
 	Viv2DPixmapPrivPtr dst = exaGetPixmapDriverPrivate(pDst);
-//	ScrnInfoPtr pScrn = pix2scrn(pDst);
 	Viv2DCompositeOp *compOp = v2d->comp_op;
 
-	VIV2D_MSG("Viv2DDoneComposite");
+	VIV2D_MSG("Viv2DDoneComposite %d",v2d->stream->offset);
 
-//	etna_cmd_stream_finish(v2d->stream);
-	etna_cmd_stream_flush(v2d->stream);
+	etna_cmd_stream_finish(v2d->stream);
+//	etna_cmd_stream_flush(v2d->stream);
 
 	free(compOp);
 	v2d->comp_op = NULL;
@@ -1614,6 +1465,8 @@ InitViv2DEXA(ScreenPtr pScreen, ScrnInfoPtr pScrn, int fd)
 		goto fail;
 	}
 
+	v2d->fd=etnavivFD;
+
 	v2d->dev = etna_device_new(etnavivFD);
 	if (!v2d->dev) {
 		ERROR_MSG("Viv2DEXA: Failed to load device");
@@ -1635,7 +1488,7 @@ InitViv2DEXA(ScreenPtr pScreen, ScrnInfoPtr pScrn, int fd)
 		goto fail;
 	}
 
-	v2d->stream = etna_cmd_stream_new(v2d->pipe, 1024, NULL, NULL);
+	v2d->stream = etna_cmd_stream_new(v2d->pipe, VIV2D_STREAM_SIZE, NULL, NULL);
 	if (!v2d->stream) {
 		ERROR_MSG("Viv2DEXA: Failed to create stream");
 		goto fail;
