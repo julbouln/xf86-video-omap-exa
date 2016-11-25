@@ -688,7 +688,7 @@ OMAPPreInit(ScrnInfoPtr pScrn, int flags)
 
 		/* Load external sub-modules now: */
 
-		if (!(xf86LoadSubModule(pScrn, "dri2") &&
+		if (!(xf86LoadSubModule(pScrn, "dri2") && xf86LoadSubModule(pScrn, "dri3") &&
 		        xf86LoadSubModule(pScrn, "exa") &&
 		        xf86LoadSubModule(pScrn, "fb"))) {
 			goto fail;
@@ -718,7 +718,7 @@ OMAPAccelInit(ScreenPtr pScreen)
 {
 	ScrnInfoPtr pScrn = xf86Screens[pScreen->myNum];
 	OMAPPtr pOMAP = OMAPPTR(pScrn);
-	
+
 	INFO_MSG("Looking for hardware EXA ...\n");
 
 	if (!pOMAP->pOMAPEXA) {
@@ -737,17 +737,29 @@ OMAPAccelInit(ScreenPtr pScreen)
 		pOMAP->pOMAPEXA = InitNullEXA(pScreen, pScrn, pOMAP->drmFD);
 	}
 
+
 	if (pOMAP->dri && pOMAP->pOMAPEXA) {
-		pOMAP->dri = OMAPDRI2ScreenInit(pScreen);
+		pOMAP->dri = Viv2DDRI3ScreenInit(pScreen);
+		if(pOMAP->dri)
+		{
+			xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+			           "Viv2D DRI3 enabled");
+		} else {
+			xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
+			           "Viv2D DRI3 failed, fallback to software");
+			pOMAP->dri = OMAPDRI2ScreenInit(pScreen);
+		}
 	} else {
 		pOMAP->dri = FALSE;
 	}
 
-	if (OMAPVideoScreenInit(pScreen)) {
-		INFO_MSG("Initialized XV");
-	} else {
-		ERROR_MSG("Could not initialize XV");
-	}
+	/*
+		if (OMAPVideoScreenInit(pScreen)) {
+			INFO_MSG("Initialized XV");
+		} else {
+			ERROR_MSG("Could not initialize XV");
+		}
+		*/
 }
 
 /**
@@ -961,7 +973,7 @@ OMAPCloseScreen(CLOSE_SCREEN_ARGS_DECL)
 	}
 
 	if (pOMAP->dri) {
-		OMAPDRI2CloseScreen(pScreen);
+//		OMAPDRI2CloseScreen(pScreen);
 	}
 
 	OMAPVideoCloseScreen(pScreen);

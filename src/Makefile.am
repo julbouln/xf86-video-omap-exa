@@ -53,4 +53,5 @@ omap_drv_la_SOURCES = \
          omap_driver.h \
          omap_util.h \
          viv2d_exa.c \
+         viv2d_dri3.c \
          compat-api.h
