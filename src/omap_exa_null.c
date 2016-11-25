@@ -99,7 +99,7 @@ InitNullEXA(ScreenPtr pScreen, ScrnInfoPtr pScrn, int fd)
 	OMAPEXAPtr omap_exa = (OMAPEXAPtr)null_exa;
 	ExaDriverPtr exa;
 
-	INFO_MSG("Soft EXA mode %d",fd);
+	INFO_MSG("Soft EXA mode");
 
 	exa = exaDriverAlloc();
 	if (!exa) {

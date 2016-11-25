@@ -174,6 +174,9 @@ Bool Viv2DDRI3ScreenInit(ScreenPtr pScreen)
 	struct stat st;
 	char buf[64];
 
+	if(!v2d)
+		return FALSE;
+
 	free((void *)v2d->render_node);
 
 	if (fstat(v2d->fd, &st) || !S_ISCHR(st.st_mode))

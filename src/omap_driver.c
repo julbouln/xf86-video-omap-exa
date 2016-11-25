@@ -742,11 +742,9 @@ OMAPAccelInit(ScreenPtr pScreen)
 		pOMAP->dri = Viv2DDRI3ScreenInit(pScreen);
 		if(pOMAP->dri)
 		{
-			xf86DrvMsg(pScrn->scrnIndex, X_INFO,
-			           "Viv2D DRI3 enabled");
+			INFO_MSG("Viv2D DRI3 enabled");
 		} else {
-			xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
-			           "Viv2D DRI3 failed, fallback to software");
+			ERROR_MSG("Viv2D DRI3 failed, fallback to software");
 			pOMAP->dri = OMAPDRI2ScreenInit(pScreen);
 		}
 	} else {
