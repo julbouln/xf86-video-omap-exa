@@ -592,6 +592,7 @@ OMAPPreInit(ScrnInfoPtr pScrn, int flags)
 			char *gpuName = drmGetDeviceNameFromFd(fd);
 			xf86DrvMsg(pScrn->scrnIndex, X_INFO,
 			           "%p %s (%d) is GPU\n", pOMAP, gpuName, fd);
+			close(fd);
 		}
 	}
 	else

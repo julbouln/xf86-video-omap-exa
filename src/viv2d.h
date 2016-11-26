@@ -153,7 +153,7 @@ static inline Bool Viv2DSetFormat(unsigned int depth, unsigned int bpp, Viv2DFor
 	return TRUE;
 }
 
-static Bool Viv2DFixNonAlpha(Viv2DFormat *fmt)
+static inline Bool Viv2DFixNonAlpha(Viv2DFormat *fmt)
 {
 	switch (fmt->fmt) {
 	case DE_FORMAT_X4R4G4B4:

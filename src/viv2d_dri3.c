@@ -33,11 +33,11 @@
 #include "viv2d_exa.h"
 
 static Viv2DPixmapPrivPtr Viv2DAllocPixmap(PixmapPtr pixmap,
-	Viv2DFormat fmt)
+        Viv2DFormat fmt)
 {
 	Viv2DPixmapPrivPtr vpix;
 
-	vpix = calloc(1, sizeof *vpix);
+	vpix = calloc(1, sizeof * vpix);
 	if (vpix) {
 		vpix->width = pixmap->drawable.width;
 		vpix->height = pixmap->drawable.height;
@@ -48,8 +48,8 @@ static Viv2DPixmapPrivPtr Viv2DAllocPixmap(PixmapPtr pixmap,
 }
 
 static Viv2DPixmapPrivPtr Viv2DPixmapAttachDmabuf(
-	Viv2DPtr v2d, PixmapPtr pixmap, Viv2DFormat fmt,
-	int fd)
+    Viv2DPtr v2d, PixmapPtr pixmap, Viv2DFormat fmt,
+    int fd)
 {
 	Viv2DPixmapPrivPtr vpix;
 	struct etna_bo *bo;
@@ -57,9 +57,9 @@ static Viv2DPixmapPrivPtr Viv2DPixmapAttachDmabuf(
 	bo = etna_bo_from_dmabuf(v2d->dev, fd);
 	if (!bo) {
 		xf86Msg(X_ERROR,
-			   "Viv2D: gpu dmabuf map failed");
-			   
-			return NULL;
+		        "Viv2D: gpu dmabuf map failed");
+
+		return NULL;
 	}
 
 	vpix = Viv2DAllocPixmap(pixmap, fmt);
@@ -76,7 +76,7 @@ static Viv2DPixmapPrivPtr Viv2DPixmapAttachDmabuf(
 }
 
 PixmapPtr Viv2DPixmapFromDmabuf(ScreenPtr pScreen, int fd,
-        CARD16 width, CARD16 height, CARD16 stride, CARD8 depth, CARD8 bpp)
+                                CARD16 width, CARD16 height, CARD16 stride, CARD8 depth, CARD8 bpp)
 {
 	Viv2DPtr v2d = Viv2DPrivFromScreen(pScreen);
 	Viv2DFormat fmt;
@@ -101,6 +101,7 @@ PixmapPtr Viv2DPixmapFromDmabuf(ScreenPtr pScreen, int fd,
 
 static Bool Viv2DDRI3Authorise(Viv2DPtr v2d, int fd)
 {
+	int ret;
 	struct stat st;
 	drm_magic_t magic;
 
@@ -115,8 +116,19 @@ static Bool Viv2DDRI3Authorise(Viv2DPtr v2d, int fd)
 	if (st.st_rdev & 0x80)
 		return TRUE;
 
-	return drmGetMagic(fd, &magic) == 0 &&
-	       drmAuthMagic(v2d->fd, magic) == 0;
+	ret = drmGetMagic(fd, &magic);
+	if (ret){
+		VIV2D_ERR_MSG("Viv2DDRI3Open cannot get magic : %d",ret);
+		return FALSE;
+	}
+
+	ret = drmAuthMagic(v2d->fd, magic);
+	if(ret) {
+		VIV2D_ERR_MSG("Viv2DDRI3Open cannot auth magic : %d",ret);
+		return FALSE;
+	}
+
+	return TRUE;
 }
 
 static int Viv2DDRI3Open(ScreenPtr pScreen, RRProviderPtr provider, int *o)
@@ -125,10 +137,15 @@ static int Viv2DDRI3Open(ScreenPtr pScreen, RRProviderPtr provider, int *o)
 	int fd;
 
 	fd = open(v2d->render_node, O_RDWR | O_CLOEXEC);
-	if (fd < 0)
+	if (fd < 0) {
+		VIV2D_ERR_MSG("Viv2DDRI3Open cannot open %s", v2d->render_node);
 		return BadAlloc;
+	} else {
+		VIV2D_INFO_MSG("Viv2DDRI3Open %s opened in %d", v2d->render_node, fd);
+	}
 
 	if (!Viv2DDRI3Authorise(v2d, fd)) {
+		VIV2D_ERR_MSG("Viv2DDRI3Open cannot authorize %d", fd);
 		close(fd);
 		return BadMatch;
 	}
@@ -139,14 +156,14 @@ static int Viv2DDRI3Open(ScreenPtr pScreen, RRProviderPtr provider, int *o)
 }
 
 static PixmapPtr Viv2DDRI3PixmapFromFD(ScreenPtr pScreen, int fd,
-	CARD16 width, CARD16 height, CARD16 stride, CARD8 depth, CARD8 bpp)
+                                       CARD16 width, CARD16 height, CARD16 stride, CARD8 depth, CARD8 bpp)
 {
 	return Viv2DPixmapFromDmabuf(pScreen, fd, width, height,
-					  stride, depth, bpp);
+	                             stride, depth, bpp);
 }
 
 static int Viv2DDRI3FDFromPixmap(ScreenPtr pScreen, PixmapPtr pixmap,
-	CARD16 *stride, CARD32 *size)
+                                 CARD16 *stride, CARD32 *size)
 {
 	Viv2DPtr v2d = Viv2DPrivFromScreen(pScreen);
 	Viv2DPixmapPrivPtr vPix = Viv2DPrivFromPixmap(pixmap);
@@ -174,7 +191,7 @@ Bool Viv2DDRI3ScreenInit(ScreenPtr pScreen)
 	struct stat st;
 	char buf[64];
 
-	if(!v2d)
+	if (!v2d)
 		return FALSE;
 
 	free((void *)v2d->render_node);
@@ -183,7 +200,7 @@ Bool Viv2DDRI3ScreenInit(ScreenPtr pScreen)
 		return FALSE;
 
 	snprintf(buf, sizeof(buf), "%s/card%d", DRM_DIR_NAME,
-		 (unsigned int)st.st_rdev & 0x7f);
+	         (unsigned int)st.st_rdev & 0x7f);
 
 	if (access(buf, F_OK))
 		return FALSE;
