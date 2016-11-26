@@ -6,9 +6,13 @@
 #include "xf86.h"
 #include "xf86_OSproc.h"
 
+#include "state.xml.h"
+#include "state_2d.xml.h"
+#include "cmdstream.xml.h"
+
 #define VIV2D_MAX_RECTS 256
 
-//#define ETNA_BO_FROM_HANDLE_MISSING 1
+#define ETNA_BO_FROM_HANDLE_MISSING 1
 
 #define VIV2D_DBG_MSG(fmt, ...)
 /*#define VIV2D_DBG_MSG(fmt, ...) \
@@ -78,17 +82,25 @@ typedef struct _Viv2DBlendOp {
 	int op;
 	int srcBlendMode;
 	int dstBlendMode;
-	uint8_t src_alpha;
-	uint8_t dst_alpha;
 } Viv2DBlendOp;
+
+enum viv2d_src_type {
+	viv2d_src_pix = 0,
+	viv2d_src_1x1_repeat,
+	viv2d_src_solid
+};
 
 typedef struct _Viv2DOp {
 	Viv2DBlendOp *blend_op;
-	Viv2DBlendOp *msk_op;
-	int repeat;
+	int src_type;
 
 	uint32_t fg;
 	uint32_t mask;
+
+	uint8_t src_alpha;
+	uint8_t dst_alpha;
+	Bool src_alpha_mode_global;
+	Bool dst_alpha_mode_global;
 
 	Viv2DPixmapPrivPtr src;
 	Viv2DPixmapPrivPtr msk;
@@ -116,6 +128,48 @@ typedef struct _Viv2DRec {
 	int height;
 
 } Viv2DRec, *Viv2DPtr;
+
+static inline Bool Viv2DSetFormat(unsigned int depth, unsigned int bpp, Viv2DFormat *fmt)
+{
+	fmt->bpp = bpp;
+	fmt->swizzle = DE_SWIZZLE_ARGB;
+	switch (bpp) {
+	case 8:
+		fmt->fmt = DE_FORMAT_A8;
+		break;
+	case 16:
+		if (depth == 15)
+			fmt->fmt = DE_FORMAT_A1R5G5B5;
+		else
+			fmt->fmt = DE_FORMAT_R5G6B5;
+		break;
+	case 32:
+		fmt->fmt = DE_FORMAT_A8R8G8B8;
+		break;
+	default:
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+static Bool Viv2DFixNonAlpha(Viv2DFormat *fmt)
+{
+	switch (fmt->fmt) {
+	case DE_FORMAT_X4R4G4B4:
+		fmt->fmt = DE_FORMAT_A4R4G4B4;
+		return TRUE;
+	case DE_FORMAT_X1R5G5B5:
+		fmt->fmt = DE_FORMAT_A1R5G5B5;
+		return TRUE;
+	case DE_FORMAT_X8R8G8B8:
+		fmt->fmt = DE_FORMAT_A8R8G8B8;
+		return TRUE;
+	case DE_FORMAT_R5G6B5:
+		return TRUE;
+	}
+	return FALSE;
+}
 
 #ifdef ETNA_BO_FROM_HANDLE_MISSING
 // priv etna_bo structure
@@ -157,5 +211,6 @@ static struct etna_bo *etna_bo_alloc(struct etna_device *dev)
 	return mem;
 }
 #endif
+
 
 #endif

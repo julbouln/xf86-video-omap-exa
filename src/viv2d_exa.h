@@ -11,8 +11,7 @@ typedef struct {
 	Viv2DPtr v2d;
 } Viv2DEXARec, *Viv2DEXAPtr;
 
-
-static Viv2DRec*
+static inline Viv2DRec*
 Viv2DPrivFromPixmap(PixmapPtr pPixmap)
 {
 	ScrnInfoPtr pScrn = pix2scrn(pPixmap);
@@ -22,7 +21,7 @@ Viv2DPrivFromPixmap(PixmapPtr pPixmap)
 	return v2d;
 }
 
-static Viv2DRec*
+static inline Viv2DRec*
 Viv2DPrivFromScreen(ScreenPtr pScreen)
 {
 	Viv2DRec *v2d;
