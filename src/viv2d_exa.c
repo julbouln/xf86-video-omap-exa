@@ -47,7 +47,6 @@
 #include "viv2d_exa.h"
 #include "viv2d_op.h"
 
-#define VIV2D_MASK_SUPPORT 1
 
 #define VIV2D_STREAM_SIZE 512
 
@@ -55,7 +54,11 @@
 #define VIV2D_COPY 1
 #define VIV2D_COMPOSITE 1
 
-//#define VIV2D_UPLOAD_TO_SCREEN 1
+#define VIV2D_MASK_SUPPORT 1
+#define VIV2D_SOLID_PICTURE 1
+#define VIV2D_REPEAT 1
+#define VIV2D_UPLOAD_TO_SCREEN 1
+#define VIV2D_REPEAT_WITH_MASK 1
 
 //#define VIV2D_MIN_HW_HEIGHT 8
 //#define VIV2D_MIN_HW_SIZE_24BIT (64 * 64)
@@ -97,14 +100,20 @@ viv2d_pict_format[] = {
 	{PICT_x8r8g8b8, 32, DE_FORMAT_X8R8G8B8, DE_SWIZZLE_ARGB, 0},
 	{PICT_a8b8g8r8, 32, DE_FORMAT_A8R8G8B8, DE_SWIZZLE_ABGR, 8},
 	{PICT_x8b8g8r8, 32, DE_FORMAT_X8R8G8B8,	DE_SWIZZLE_ABGR, 0},
-//	{PICT_r8g8b8, 24, gcvSURF_R8G8B8, 0},
-//    {PICT_b8g8r8, 24, gcvSURF_B8G8R8, 0},
+	{PICT_b8g8r8a8, 32, DE_FORMAT_A8R8G8B8,	DE_SWIZZLE_BGRA, 8},
+	{PICT_b8g8r8x8, 32, DE_FORMAT_X8R8G8B8,	DE_SWIZZLE_BGRA, 8},
 	{PICT_r5g6b5, 16, DE_FORMAT_R5G6B5, DE_SWIZZLE_ARGB, 0},
+	{PICT_b5g6r5, 16, DE_FORMAT_R5G6B5,	DE_SWIZZLE_ABGR, 0},
 	{PICT_a1r5g5b5, 16, DE_FORMAT_A1R5G5B5, DE_SWIZZLE_ARGB, 1},
 	{PICT_x1r5g5b5, 16, DE_FORMAT_X1R5G5B5, DE_SWIZZLE_ARGB, 0},
+	{PICT_a1b5g5r5, 16, DE_FORMAT_A1R5G5B5,	DE_SWIZZLE_ABGR, 1},
+	{PICT_x1b5g5r5, 16,	DE_FORMAT_X1R5G5B5, DE_SWIZZLE_ABGR, 0},
 	{PICT_a4r4g4b4, 16, DE_FORMAT_A4R4G4B4, DE_SWIZZLE_ARGB, 4},
 	{PICT_x4r4g4b4, 16, DE_FORMAT_X4R4G4B4, DE_SWIZZLE_ARGB, 0},
+	{PICT_a4b4g4r4, 16, DE_FORMAT_A4R4G4B4, DE_SWIZZLE_ABGR, 4},
+	{PICT_x4b4g4r4, 16, DE_FORMAT_X4R4G4B4, DE_SWIZZLE_ABGR, 0},
 	{PICT_a8, 8, DE_FORMAT_A8, 8},
+	{PICT_c8, 8, DE_FORMAT_INDEX8, 8},
 	{NO_PICT_FORMAT, 0, 0, 0}
 	/*END*/
 };
@@ -527,19 +536,11 @@ Bool Viv2DUploadToScreen(PixmapPtr pDst,
 	rects[0].x2 = x + w;
 	rects[0].y2 = y + h;
 
-	rects[1].x1 = 0;
-	rects[1].y1 = 0;
-	rects[1].x2 = 0;
-	rects[1].y2 = 0;
-
 	Viv2DRect clip;
 	clip.x1 = x;
 	clip.y1 = y;
 	clip.x2 = x + w;
 	clip.y2 = y + h;
-//	srcp->format.fmt=DE_FORMAT_A8R8G8B8;
-//	srcp->format.fmt=DE_FORMAT_R5G6B5;
-//	srcp->format.swizzle = DE_SWIZZLE_ABGR;
 
 	_Viv2DStreamSrc(v2d, srcp, 0, 0, srcp->width, srcp->height, FALSE); // tmp source
 	_Viv2DStreamDst(v2d, dst, VIVS_DE_DEST_CONFIG_COMMAND_BIT_BLT, NULL);
@@ -557,8 +558,6 @@ Bool Viv2DUploadToScreen(PixmapPtr pDst,
 #else
 	etna_bo_del(srcp->bo);
 #endif
-//	free(srcp);
-//	pScreen->DestroyPixmap(pixmap);
 //	VIV2D_DBG_MSG("Viv2DUploadToScreen exit %p", src);
 
 	return TRUE;
@@ -601,7 +600,7 @@ Bool Viv2DDownloadFromScreen(PixmapPtr pSrc,
 }
 
 
-static inline uint32_t viv2d_scale16(uint32_t val, int bits)
+static inline uint32_t Viv2DScale16(uint32_t val, int bits)
 {
 	val <<= (16 - bits);
 	while (bits < 16) {
@@ -616,15 +615,15 @@ static inline uint32_t Viv2DColour(Pixel pixel, int depth) {
 	switch (depth) {
 	case 15: /* A1R5G5B5 */
 		colour = (pixel & 0x8000 ? 0xff000000 : 0) |
-		         viv2d_scale16((pixel & 0x7c00) >> 10, 5) << 16 |
-		         viv2d_scale16((pixel & 0x03e0) >> 5, 5) << 8 |
-		         viv2d_scale16((pixel & 0x001f), 5);
+		         Viv2DScale16((pixel & 0x7c00) >> 10, 5) << 16 |
+		         Viv2DScale16((pixel & 0x03e0) >> 5, 5) << 8 |
+		         Viv2DScale16((pixel & 0x001f), 5);
 		break;
 	case 16: /* R5G6B5 */
 		colour = 0xff000000 |
-		         viv2d_scale16((pixel & 0xf800) >> 11, 5) << 16 |
-		         viv2d_scale16((pixel & 0x07e0) >> 5, 6) << 8 |
-		         viv2d_scale16((pixel & 0x001f), 5);
+		         Viv2DScale16((pixel & 0xf800) >> 11, 5) << 16 |
+		         Viv2DScale16((pixel & 0x07e0) >> 5, 6) << 8 |
+		         Viv2DScale16((pixel & 0x001f), 5);
 		break;
 	case 24: /* A8R8G8B8 */
 	default:
@@ -892,7 +891,8 @@ static void Viv2DCopy (PixmapPtr pDstPixmap,
 	VIV2D_DBG_MSG("Viv2DCopy %p(%dx%d) -> %p(%dx%d) : %dx%d", op->src, srcX, srcY, op->dst, dstX, dstY, width, height);
 
 // new srcX,srcY group
-	if (op->prev_src_x != srcX || op->prev_src_y != srcY || op->cur_rect > VIV2D_MAX_RECTS) {
+	if (op->prev_src_x != srcX || op->prev_src_y != srcY) {
+		// || op->cur_rect > VIV2D_MAX_RECTS) {
 		// flush previous rects
 		if (op->prev_src_x > -1) {
 			_Viv2DStreamRects(v2d, op->rects, op->cur_rect);
@@ -1045,6 +1045,7 @@ Viv2DCheckComposite (int op,
 	Viv2DFormat dst_fmt;
 
 	if (pSrc == NULL) {
+#ifdef VIV2D_SOLID_PICTURE
 		SourcePict *sp = pSrcPicture->pSourcePict;
 
 		if (sp->type == SourcePictTypeSolidFill) {
@@ -1052,6 +1053,10 @@ Viv2DCheckComposite (int op,
 			VIV2D_UNSUPPORTED_MSG("Viv2DCheckComposite unsupported src is not a drawable : %d", sp->type);
 			return FALSE;
 		}
+#else
+		VIV2D_UNSUPPORTED_MSG("Viv2DCheckComposite unsupported src is not a drawable");
+		return FALSE;
+#endif
 	}
 
 	if (pDst == NULL) {
@@ -1072,7 +1077,7 @@ Viv2DCheckComposite (int op,
 
 	/*For forward compatibility*/
 	if (op > PictOpSaturate) {
-		VIV2D_UNSUPPORTED_MSG("Viv2DCheckComposite op unsupported");
+		VIV2D_UNSUPPORTED_MSG("Viv2DCheckComposite op unsupported : %d", op);
 		return FALSE;
 	}
 
@@ -1111,11 +1116,13 @@ Viv2DCheckComposite (int op,
 	}
 
 	if ( pSrcPicture->repeat && pSrc) {
-
+#ifdef VIV2D_REPEAT
+#ifndef VIV2D_REPEAT_WITH_MASK
 		if (pMaskPicture != NULL) {
 			VIV2D_UNSUPPORTED_MSG("Viv2DCheckComposite repeat with mask unsupported");
 			return FALSE;
 		}
+#endif
 
 		if (pSrc->drawable.width == 1 && pSrc->drawable.height == 1) {
 			// 1x1 stretch
@@ -1123,6 +1130,10 @@ Viv2DCheckComposite (int op,
 			VIV2D_UNSUPPORTED_MSG("Viv2DCheckComposite repeat > 1x1 unsupported");
 			return FALSE;
 		}
+#else
+		VIV2D_UNSUPPORTED_MSG("Viv2DCheckComposite repeat unsupported");
+		return FALSE;
+#endif
 	}
 
 	if ((pMaskPicture != NULL)) {
@@ -1139,6 +1150,7 @@ Viv2DCheckComposite (int op,
 			return FALSE;
 		}
 #else
+		VIV2D_UNSUPPORTED_MSG("Viv2DCheckComposite mask unsupported");
 		return FALSE;
 #endif
 	}
@@ -1241,16 +1253,10 @@ Viv2DPrepareComposite(int rop, PicturePtr pSrcPicture,
 	}
 
 	if (Viv2DFixNonAlpha(&dst->format)) {
-//		op->dst_alpha_mode_global = TRUE;
-//		op->dst_alpha = 0xff;
+		op->dst_alpha_mode_global = TRUE;
+		op->dst_alpha = 0xff;
 	}
 
-	/*
-		op->src_alpha_mode_global=TRUE;
-		op->dst_alpha_mode_global=TRUE;
-		op->src_alpha=0xff;
-		op->dst_alpha=0xff;
-	*/
 	op->src = src;
 	op->dst = dst;
 	op->msk = msk;
@@ -1373,6 +1379,7 @@ Viv2DComposite(PixmapPtr pDst, int srcX, int srcY, int maskX, int maskY,
 			// flush previous rects
 			if (op->prev_src_x > -1) {
 				_Viv2DStreamRects(v2d, op->rects, op->cur_rect);
+//				_Viv2DStreamCommit(v2d);
 				op->cur_rect = 0;
 			}
 

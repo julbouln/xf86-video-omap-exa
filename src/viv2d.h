@@ -146,9 +146,9 @@ static inline Bool Viv2DSetFormat(unsigned int depth, unsigned int bpp, Viv2DFor
 			fmt->fmt = DE_FORMAT_R5G6B5;
 		break;
 	case 32:
-//		if(depth == 24)
-//			fmt->fmt = DE_FORMAT_X8R8G8B8;
-//		else
+		if(depth == 24)
+			fmt->fmt = DE_FORMAT_X8R8G8B8;
+		else
 			fmt->fmt = DE_FORMAT_A8R8G8B8;			
 		break;
 	default:
