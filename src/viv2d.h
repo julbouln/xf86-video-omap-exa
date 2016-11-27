@@ -158,6 +158,17 @@ static inline Bool Viv2DSetFormat(unsigned int depth, unsigned int bpp, Viv2DFor
 	return TRUE;
 }
 
+/*
+ * There is a bug in the GPU hardware with destinations lacking alpha and
+ * swizzles BGRA/RGBA.  Rather than the GPU treating bits 7:0 as alpha, it
+ * continues to treat bits 31:24 as alpha.  This results in it replacing
+ * the B or R bits on input to the blend operation with 1.0.  However, it
+ * continues to accept the non-existent source alpha from bits 31:24.
+ *
+ * Work around this by switching to the equivalent alpha format, and using
+ * global alpha to replace the alpha channel.  The alpha channel subsitution
+ * is performed at this function's callsite.
+ */
 static inline Bool Viv2DFixNonAlpha(Viv2DFormat *fmt)
 {
 	switch (fmt->fmt) {

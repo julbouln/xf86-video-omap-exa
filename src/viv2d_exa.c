@@ -60,17 +60,8 @@
 #define VIV2D_UPLOAD_TO_SCREEN 1
 #define VIV2D_REPEAT_WITH_MASK 1
 
-//#define VIV2D_MIN_HW_HEIGHT 8
-//#define VIV2D_MIN_HW_SIZE_24BIT (64 * 64)
-
 #define VIV2D_MIN_HW_HEIGHT 64
 #define VIV2D_MIN_HW_SIZE_24BIT (128 * 128)
-
-//#define VIV2D_MIN_HW_HEIGHT 64
-//#define VIV2D_MIN_HW_SIZE_24BIT (64 * 64)
-
-//#define VIV2D_MIN_HW_HEIGHT 16
-//#define VIV2D_MIN_HW_SIZE_24BIT (16 * 16)
 
 static Viv2DBlendOp viv2d_blend_op[] = {
 	{PictOpClear,			DE_BLENDMODE_ZERO, 				DE_BLENDMODE_ZERO},
@@ -410,6 +401,11 @@ Bool Viv2DUploadToScreen(PixmapPtr pDst,
 	int bytesPerPixel = (pDst->drawable.bitsPerPixel + 7) / 8;
 	Viv2DPixmapPrivPtr srcp;
 	ScreenPtr pScreen = pDst->drawable.pScreen;
+
+	if (pDst->drawable.width * pDst->drawable.height < VIV2D_MIN_HW_SIZE_24BIT) {
+		VIV2D_UNSUPPORTED_MSG("Viv2DUploadToScreen dest drawable is too small %dx%d", pDst->drawable.width, pDst->drawable.height);
+		return FALSE;
+	}
 
 	VIV2D_DBG_MSG("Viv2DUploadToScreen check %p(%d) %dx%d(%dx%d) %dx%d %d/%d", src, src_pitch, x, y, w, h,
 	              pDst->drawable.width, pDst->drawable.height,
@@ -1042,6 +1038,7 @@ Viv2DCheckComposite (int op,
 	PixmapPtr pDst = GetDrawablePixmap(pDstPicture->pDrawable);
 
 	Viv2DFormat src_fmt;
+	Viv2DFormat msk_fmt;
 	Viv2DFormat dst_fmt;
 
 	if (pSrc == NULL) {
@@ -1087,6 +1084,14 @@ Viv2DCheckComposite (int op,
 		return FALSE;
 	}
 
+	/*
+		if (pMaskPicture != NULL) {
+			if (!Viv2DGetPictureFormat(pMaskPicture->format, &msk_fmt)) {
+				VIV2D_UNSUPPORTED_MSG("Viv2DCheckComposite unsupported msk format %s", pix_format_name(pMaskPicture->format));
+				return FALSE;
+			}
+		}
+	*/
 	if (!Viv2DGetPictureFormat(pDstPicture->format, &dst_fmt)) {
 		VIV2D_UNSUPPORTED_MSG("Viv2DCheckComposite unsupported dst format %s", pix_format_name(pDstPicture->format));
 		return FALSE;
@@ -1226,10 +1231,6 @@ Viv2DPrepareComposite(int rop, PicturePtr pSrcPicture,
 	if (pSrc != NULL)
 		src = exaGetPixmapDriverPrivate(pSrc);
 
-	if (pMaskPicture)
-		msk = exaGetPixmapDriverPrivate(pMask);
-
-
 	if (!Viv2DGetPictureFormat(pSrcPicture->format, &src->format)) {
 		VIV2D_UNSUPPORTED_MSG("Viv2DPrepareComposite unsupported src format %s", pix_format_name(pSrcPicture->format));
 		return FALSE;
@@ -1240,12 +1241,28 @@ Viv2DPrepareComposite(int rop, PicturePtr pSrcPicture,
 		return FALSE;
 	}
 
+	if (pMaskPicture != NULL) {
+		msk = exaGetPixmapDriverPrivate(pMask);
+
+		if (!Viv2DGetPictureFormat(pMaskPicture->format, &msk->format)) {
+			VIV2D_UNSUPPORTED_MSG("Viv2DPrepareComposite unsupported msk format %s", pix_format_name(pMaskPicture->format));
+			return FALSE;
+		}
+
+		VIV2D_DBG_MSG("Viv2DPrepareComposite msk:%p(%dx%d) %s",
+		              msk, msk->width, msk->height, pix_format_name(pMaskPicture->format));
+	}
 	VIV2D_DBG_MSG("Viv2DPrepareComposite src:%p(%dx%d) %s -> dst:%p(%dx%d) %s / op:%d(%s)",
 	              src, src->width, src->height, pix_format_name(pSrcPicture->format),
 	              dst, dst->width, dst->height, pix_format_name(pDstPicture->format), rop, pix_op_name(rop));
 
 	op = _Viv2DOpCreate();
 	op->blend_op = &viv2d_blend_op[rop];
+
+	op->src_alpha_mode_global = FALSE;
+	op->dst_alpha_mode_global = FALSE;
+	op->src_alpha = 0x00;
+	op->dst_alpha = 0x00;
 
 	if (Viv2DFixNonAlpha(&src->format)) {
 		op->src_alpha_mode_global = TRUE;
@@ -1257,6 +1274,11 @@ Viv2DPrepareComposite(int rop, PicturePtr pSrcPicture,
 		op->dst_alpha = 0xff;
 	}
 
+	// FIXME for an unknown reason, alpha src to fixed dest does not work propertly with 24bits depth
+/*	if (op->dst_alpha_mode_global && !op->src_alpha_mode_global) {
+		return FALSE;
+	}
+*/
 	op->src = src;
 	op->dst = dst;
 	op->msk = msk;
