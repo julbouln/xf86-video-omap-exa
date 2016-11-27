@@ -423,13 +423,11 @@ Bool Viv2DUploadToScreen(PixmapPtr pDst,
 	srcp = &pix;
 
 	if (!Viv2DSetFormat(pDst->drawable.depth, pDst->drawable.bitsPerPixel, &dst->format)) {
-//		pScreen->DestroyPixmap(pixmap);
 		VIV2D_UNSUPPORTED_MSG("Viv2DUploadToScreen unsupported dst format %d/%d %p", pDst->drawable.depth, pDst->drawable.bitsPerPixel, src);
 		return FALSE;
 	}
 
 	if (!Viv2DSetFormat(pDst->drawable.depth, pDst->drawable.bitsPerPixel, &pix.format)) {
-//		pScreen->DestroyPixmap(pixmap);
 		VIV2D_UNSUPPORTED_MSG("Viv2DUploadToScreen unsupported format %d/%d %p", pDst->drawable.depth, pDst->drawable.bitsPerPixel, src);
 		return FALSE;
 	}
@@ -442,8 +440,6 @@ Bool Viv2DUploadToScreen(PixmapPtr pDst,
 	}
 
 	int pitch = srcp->pitch;
-//	int pitch = srcp->pitch;
-//	srcp->pitch = pitch;
 
 #ifdef VIV2D_UPLOAD_USERPTR
 	int size = ALIGN(pitch * h, 4096);
@@ -510,8 +506,6 @@ Bool Viv2DUploadToScreen(PixmapPtr pDst,
 	int size = pitch * srcp->height;
 	srcp->bo = etna_bo_new(v2d->dev, size, ETNA_BO_UNCACHED);
 
-//	etna_bo_cpu_prep(srcp->bo, DRM_ETNA_PREP_READ | DRM_ETNA_PREP_WRITE);
-
 	char *src_buf = src ;
 	char *buf = (char *) etna_bo_map(srcp->bo);
 
@@ -521,9 +515,6 @@ Bool Viv2DUploadToScreen(PixmapPtr pDst,
 		src_buf += src_pitch;
 		buf += pitch;
 	}
-
-
-//	etna_bo_cpu_fini(srcp->bo);
 
 #endif
 
@@ -542,7 +533,6 @@ Bool Viv2DUploadToScreen(PixmapPtr pDst,
 	_Viv2DStreamDst(v2d, dst, VIVS_DE_DEST_CONFIG_COMMAND_BIT_BLT, NULL);
 	_Viv2DStreamBlendOp(v2d, NULL, 0, 0, FALSE, FALSE);
 	_Viv2DStreamRects(v2d, rects, 1);
-//	etna_cmd_stream_flush(v2d->stream);
 	_Viv2DStreamCommit(v2d);
 
 //	VIV2D_DBG_MSG("Viv2DUploadToScreen blit done %p", src);
@@ -555,7 +545,6 @@ Bool Viv2DUploadToScreen(PixmapPtr pDst,
 	etna_bo_del(srcp->bo);
 #endif
 //	VIV2D_DBG_MSG("Viv2DUploadToScreen exit %p", src);
-
 	return TRUE;
 }
 
@@ -727,6 +716,7 @@ static void Viv2DSolid (PixmapPtr pPixmap, int x1, int y1, int x2, int y2) {
 		_Viv2DStreamDst(v2d, op->dst, VIVS_DE_DEST_CONFIG_COMMAND_CLEAR, NULL);
 		_Viv2DStreamColor(v2d, op->fg);
 		_Viv2DStreamRects(v2d, op->rects, op->cur_rect);
+		_Viv2DStreamFlush(v2d);
 		op->cur_rect = 0;
 		_Viv2DOpAddRect(op, x1, y1, x2 - x1, y2 - y1);
 
@@ -887,11 +877,11 @@ static void Viv2DCopy (PixmapPtr pDstPixmap,
 	VIV2D_DBG_MSG("Viv2DCopy %p(%dx%d) -> %p(%dx%d) : %dx%d", op->src, srcX, srcY, op->dst, dstX, dstY, width, height);
 
 // new srcX,srcY group
-	if (op->prev_src_x != srcX || op->prev_src_y != srcY) {
-		// || op->cur_rect > VIV2D_MAX_RECTS) {
+	if (op->prev_src_x != srcX || op->prev_src_y != srcY || op->cur_rect >= VIV2D_MAX_RECTS) {
 		// flush previous rects
 		if (op->prev_src_x > -1) {
 			_Viv2DStreamRects(v2d, op->rects, op->cur_rect);
+			_Viv2DStreamFlush(v2d);
 			op->cur_rect = 0;
 		}
 
@@ -981,28 +971,6 @@ static Bool Viv2DGetPictureFormat(int exa_fmt, Viv2DFormat *fmt) {
 		fmt->exaFmt = exa_fmt;
 	}
 	return isFound;
-}
-
-static inline int IsSourceAlphaRequired(int op) {
-	return (((
-	             (1 << PictOpOver) |
-	             (1 << PictOpInReverse) |
-	             (1 << PictOpOutReverse) |
-	             (1 << PictOpAtop) |
-	             (1 << PictOpAtopReverse) |
-	             (1 << PictOpXor) |
-	             0) >> (op)) & 1);
-}
-
-static inline int IsDestAlphaRequired(int op) {
-	return (((
-	             (1 << PictOpOverReverse) |
-	             (1 << PictOpIn) |
-	             (1 << PictOpOut) |
-	             (1 << PictOpAtop) |
-	             (1 << PictOpAtopReverse) |
-	             (1 << PictOpXor) |
-	             0) >> (op)) & 1);
 }
 
 /**
@@ -1397,16 +1365,15 @@ Viv2DComposite(PixmapPtr pDst, int srcX, int srcY, int maskX, int maskY,
 		etna_bo_del(tmp.bo);
 	} else {
 		// new srcX,srcY group
-		if (op->prev_src_x != srcX || op->prev_src_y != srcY || op->cur_rect > VIV2D_MAX_RECTS) {
+		if (op->prev_src_x != srcX || op->prev_src_y != srcY || op->cur_rect >= VIV2D_MAX_RECTS) {
 			// flush previous rects
 			if (op->prev_src_x > -1) {
 				_Viv2DStreamRects(v2d, op->rects, op->cur_rect);
-//				_Viv2DStreamCommit(v2d);
+				_Viv2DStreamFlush(v2d);
 				op->cur_rect = 0;
 			}
 
 			// create states for srcX,srcY group
-
 			switch (op->src_type) {
 			case viv2d_src_1x1_repeat:
 				_Viv2DStreamSrc(v2d, op->src, 0, 0, 1, 1, FALSE);
@@ -1425,9 +1392,7 @@ Viv2DComposite(PixmapPtr pDst, int srcX, int srcY, int maskX, int maskY,
 				_Viv2DStreamDst(v2d, op->dst, VIVS_DE_DEST_CONFIG_COMMAND_BIT_BLT, NULL);
 				break;
 			}
-
 			_Viv2DStreamBlendOp(v2d, op->blend_op, op->src_alpha, op->dst_alpha, op->src_alpha_mode_global, op->dst_alpha_mode_global);
-
 		}
 
 		_Viv2DOpAddRect(op, dstX, dstY, width, height);

@@ -144,7 +144,6 @@ static inline void _Viv2DStreamRects(Viv2DPtr v2d, Viv2DRect *rects, int cur_rec
 
 static inline void _Viv2DStreamBlendOp(Viv2DPtr v2d, Viv2DBlendOp *blend_op, uint8_t src_alpha, uint8_t dst_alpha, Bool src_global, Bool dst_global) {
 	if (blend_op) {
-#if 1
 		etna_set_state(v2d->stream, VIVS_DE_ALPHA_CONTROL,
 		               VIVS_DE_ALPHA_CONTROL_ENABLE_ON |
 		               VIVS_DE_ALPHA_CONTROL_PE10_GLOBAL_SRC_ALPHA(src_alpha) |
@@ -172,36 +171,6 @@ static inline void _Viv2DStreamBlendOp(Viv2DPtr v2d, Viv2DBlendOp *blend_op, uin
 		               VIVS_DE_COLOR_MULTIPLY_MODES_DST_PREMULTIPLY_DISABLE |
 		               VIVS_DE_COLOR_MULTIPLY_MODES_SRC_GLOBAL_PREMULTIPLY_DISABLE |
 		               VIVS_DE_COLOR_MULTIPLY_MODES_DST_DEMULTIPLY_DISABLE);
-#endif
-#if 0
-		etna_set_state(v2d->stream, VIVS_DE_CONFIG, 0); /* TODO */
-		etna_set_state(v2d->stream, VIVS_DE_SRC_ORIGIN_FRACTION, 0);
-		etna_set_state(v2d->stream, VIVS_DE_ALPHA_CONTROL,
-		               VIVS_DE_ALPHA_CONTROL_ENABLE_ON |
-		               VIVS_DE_ALPHA_CONTROL_PE10_GLOBAL_SRC_ALPHA(0xff) |
-		               VIVS_DE_ALPHA_CONTROL_PE10_GLOBAL_DST_ALPHA(0xff));
-
-		etna_set_state(v2d->stream, VIVS_DE_ALPHA_MODES,
-		               VIVS_DE_ALPHA_MODES_SRC_ALPHA_MODE_NORMAL |
-		               VIVS_DE_ALPHA_MODES_DST_ALPHA_MODE_NORMAL |
-		               VIVS_DE_ALPHA_MODES_GLOBAL_SRC_ALPHA_MODE_SCALED |
-		               VIVS_DE_ALPHA_MODES_GLOBAL_DST_ALPHA_MODE_SCALED |
-		               VIVS_DE_ALPHA_MODES_PE10_SRC_COLOR_MULTIPLY_ENABLE |
-		               VIVS_DE_ALPHA_MODES_PE10_DST_COLOR_MULTIPLY_ENABLE |
-		               VIVS_DE_ALPHA_MODES_SRC_ALPHA_FACTOR_DISABLE |
-		               VIVS_DE_ALPHA_MODES_SRC_BLENDING_MODE(blend_op->srcBlendMode) |
-		               VIVS_DE_ALPHA_MODES_DST_ALPHA_FACTOR_DISABLE |
-		               VIVS_DE_ALPHA_MODES_DST_BLENDING_MODE(blend_op->dstBlendMode));
-
-		etna_set_state(v2d->stream, VIVS_DE_GLOBAL_SRC_COLOR, 0xff << 24);
-		etna_set_state(v2d->stream, VIVS_DE_GLOBAL_DEST_COLOR, 0xff << 24);
-
-		etna_set_state(v2d->stream, VIVS_DE_COLOR_MULTIPLY_MODES, /* PE20 */
-		               VIVS_DE_COLOR_MULTIPLY_MODES_SRC_PREMULTIPLY_ENABLE |
-		               VIVS_DE_COLOR_MULTIPLY_MODES_DST_PREMULTIPLY_ENABLE |
-		               VIVS_DE_COLOR_MULTIPLY_MODES_SRC_GLOBAL_PREMULTIPLY_DISABLE |
-		               VIVS_DE_COLOR_MULTIPLY_MODES_DST_DEMULTIPLY_DISABLE);
-#endif
 	} else {
 		etna_set_state(v2d->stream, VIVS_DE_ALPHA_CONTROL,
 		               VIVS_DE_ALPHA_CONTROL_ENABLE_OFF);
@@ -220,6 +189,10 @@ static inline void _Viv2DStreamColor(Viv2DPtr v2d, unsigned int color) {
 static inline void _Viv2DStreamCommit(Viv2DPtr v2d) {
 	etna_cmd_stream_finish(v2d->stream);
 //	etna_cmd_stream_flush(v2d->stream);
+}
+
+static inline void _Viv2DStreamFlush(Viv2DPtr v2d) {
+	etna_cmd_stream_flush(v2d->stream);
 }
 
 #endif
