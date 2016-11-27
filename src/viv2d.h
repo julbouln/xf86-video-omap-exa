@@ -12,7 +12,9 @@
 
 #define VIV2D_MAX_RECTS 256
 
-#define ETNA_BO_FROM_HANDLE_MISSING 1
+// experimental stuff
+//#define ETNA_BO_FROM_HANDLE_MISSING 1
+//#define VIV2D_UPLOAD_USERPTR 1
 
 #define VIV2D_DBG_MSG(fmt, ...)
 /*#define VIV2D_DBG_MSG(fmt, ...) \
@@ -144,7 +146,10 @@ static inline Bool Viv2DSetFormat(unsigned int depth, unsigned int bpp, Viv2DFor
 			fmt->fmt = DE_FORMAT_R5G6B5;
 		break;
 	case 32:
-		fmt->fmt = DE_FORMAT_A8R8G8B8;
+//		if(depth == 24)
+//			fmt->fmt = DE_FORMAT_X8R8G8B8;
+//		else
+			fmt->fmt = DE_FORMAT_A8R8G8B8;			
 		break;
 	default:
 		return FALSE;

@@ -55,6 +55,8 @@
 #define VIV2D_COPY 1
 #define VIV2D_COMPOSITE 1
 
+//#define VIV2D_UPLOAD_TO_SCREEN 1
+
 //#define VIV2D_MIN_HW_HEIGHT 8
 //#define VIV2D_MIN_HW_SIZE_24BIT (64 * 64)
 
@@ -95,6 +97,8 @@ viv2d_pict_format[] = {
 	{PICT_x8r8g8b8, 32, DE_FORMAT_X8R8G8B8, DE_SWIZZLE_ARGB, 0},
 	{PICT_a8b8g8r8, 32, DE_FORMAT_A8R8G8B8, DE_SWIZZLE_ABGR, 8},
 	{PICT_x8b8g8r8, 32, DE_FORMAT_X8R8G8B8,	DE_SWIZZLE_ABGR, 0},
+//	{PICT_r8g8b8, 24, gcvSURF_R8G8B8, 0},
+//    {PICT_b8g8r8, 24, gcvSURF_B8G8R8, 0},
 	{PICT_r5g6b5, 16, DE_FORMAT_R5G6B5, DE_SWIZZLE_ARGB, 0},
 	{PICT_a1r5g5b5, 16, DE_FORMAT_A1R5G5B5, DE_SWIZZLE_ARGB, 1},
 	{PICT_x1r5g5b5, 16, DE_FORMAT_X1R5G5B5, DE_SWIZZLE_ARGB, 0},
@@ -299,6 +303,7 @@ Viv2DModifyPixmapHeader(PixmapPtr pPixmap, int width, int height,
 
 //	priv->pitch = pPixmap->devKind = Viv2DPitch(width, bitsPerPixel);
 	priv->pitch = pPixmap->devKind = OMAPCalculateStride(width, bitsPerPixel);
+//	Viv2DSetFormat(pPixmap->drawable.depth, pPixmap->drawable.bitsPerPixel, &priv->format);
 
 	if (pPixData == omap_bo_map(pOMAP->scanout)) {
 		VIV2D_DBG_MSG("Viv2DModifyPixmapHeader wrapping scanout buffer pPixData:%p etna:%p omap:%p", pPixData, etna_bo_map(v2d->bo), omap_bo_map(pOMAP->scanout));
@@ -397,24 +402,37 @@ Bool Viv2DUploadToScreen(PixmapPtr pDst,
 	Viv2DPixmapPrivPtr srcp;
 	ScreenPtr pScreen = pDst->drawable.pScreen;
 
-	VIV2D_INFO_MSG("Viv2DUploadToScreen check %p(%d) %dx%d(%dx%d) %dx%d %d/%d", src, src_pitch, x, y, w, h,
-	               pDst->drawable.width, pDst->drawable.height,
-	               pDst->drawable.depth, pDst->drawable.bitsPerPixel);
-
+	VIV2D_DBG_MSG("Viv2DUploadToScreen check %p(%d) %dx%d(%dx%d) %dx%d %d/%d", src, src_pitch, x, y, w, h,
+	              pDst->drawable.width, pDst->drawable.height,
+	              pDst->drawable.depth, pDst->drawable.bitsPerPixel);
 
 	Viv2DPixmapPrivRec pix;
 	pix.width = w;
 	pix.height = h;
 	pix.pitch = OMAPCalculateStride(w, pDst->drawable.bitsPerPixel);
+//	pix.pitch = Viv2DPitch(w, pDst->drawable.bitsPerPixel);
 
 	pix.priv = NULL;
 	pix.bo = NULL;
 
 	srcp = &pix;
 
+	if (!Viv2DSetFormat(pDst->drawable.depth, pDst->drawable.bitsPerPixel, &dst->format)) {
+//		pScreen->DestroyPixmap(pixmap);
+		VIV2D_UNSUPPORTED_MSG("Viv2DUploadToScreen unsupported dst format %d/%d %p", pDst->drawable.depth, pDst->drawable.bitsPerPixel, src);
+		return FALSE;
+	}
+
 	if (!Viv2DSetFormat(pDst->drawable.depth, pDst->drawable.bitsPerPixel, &pix.format)) {
 //		pScreen->DestroyPixmap(pixmap);
-		VIV2D_ERR_MSG("Viv2DUploadToScreen unsupported format %d/%d %p", pDst->drawable.depth, pDst->drawable.bitsPerPixel, src);
+		VIV2D_UNSUPPORTED_MSG("Viv2DUploadToScreen unsupported format %d/%d %p", pDst->drawable.depth, pDst->drawable.bitsPerPixel, src);
+		return FALSE;
+	}
+
+
+	if (dst->format.fmt == DE_FORMAT_A8)
+	{
+		VIV2D_UNSUPPORTED_MSG("Viv2DUploadToScreen unsupported dst A8");
 		return FALSE;
 	}
 
@@ -422,39 +440,35 @@ Bool Viv2DUploadToScreen(PixmapPtr pDst,
 //	int pitch = srcp->pitch;
 //	srcp->pitch = pitch;
 
-#if 0
-// fake
-	int cpp = pDst->drawable.bitsPerPixel / 8;
-	int dst_pitch = exaGetPixmapPitch(pDst);
-	char *dst_buf = etna_bo_map(dst->bo);
-	dst_buf += y * dst_pitch + x * cpp;
-
-	for (; height > 0; height--) {
-		memcpy(dst_buf, src, w * cpp);
-		dst_buf += dst_pitch;
-		src += src_pitch;
-	}
-#endif
-#if 0
+#ifdef VIV2D_UPLOAD_USERPTR
 	int size = ALIGN(pitch * h, 4096);
 	void *mem = NULL;
+	Bool aligned = FALSE;
 
-	VIV2D_INFO_MSG("Viv2DUploadToScreen %p %dx%d(%dx%d) %d/%d/%d %d %d", src, x, y, w, h,
-	               src_pitch, srcp->pitch, pitch, dst->pitch, w * bytesPerPixel);
+//	if (ALIGN((uintptr_t)src, 4096) == (uintptr_t)src)
+//		aligned = TRUE;
 
-	posix_memalign(&mem, 4096, size); // aligned buf with aligned size
+	VIV2D_DBG_MSG("Viv2DUploadToScreen %p %dx%d(%dx%d) %d/%d/%d %d %d", src, x, y, w, h,
+	              src_pitch, srcp->pitch, pitch, dst->pitch, w * bytesPerPixel);
 
+	char *src_buf = src;
+	char *buf;
 
-	char *src_buf = src ;
+	if (!aligned) {
+		posix_memalign(&mem, 4096, size); // aligned buf with aligned size
+
+		buf = mem;
 //	char *buf = (char *) etna_bo_map(srcp->bo);
-	char *buf = mem;
 
-	// just copy the needed rect (w x h)
-	while (height--) {
-		memcpy(buf, src_buf, w * bytesPerPixel);
+		// just copy the needed rect (w x h)
+		while (height--) {
+			memcpy(buf, src_buf, w * bytesPerPixel);
 //		memcpy(buf, src_buf, pitch);
-		src_buf += src_pitch;
-		buf += pitch;
+			src_buf += src_pitch;
+			buf += pitch;
+		}
+	} else {
+		mem = src;
 	}
 
 	/*	int i;
@@ -472,7 +486,7 @@ Bool Viv2DUploadToScreen(PixmapPtr pDst,
 		VIV2D_ERR_MSG("Viv2DUploadToScreen userptr fail %d", err);
 		return FALSE;
 	}
-	VIV2D_INFO_MSG("Viv2DUploadToScreen userptr opened %d", ureq.handle);
+	VIV2D_DBG_MSG("Viv2DUploadToScreen userptr opened %d", ureq.handle);
 
 #ifdef ETNA_BO_FROM_HANDLE_MISSING
 	/* !!! we need access to private struct etna_bo since etna_bo_from_handle is missing !!! */
@@ -484,7 +498,7 @@ Bool Viv2DUploadToScreen(PixmapPtr pDst,
 #else
 //	srcp->bo = etna_bo_from_handle(v2d->dev, req.handle, size);
 #endif
-	VIV2D_INFO_MSG("Viv2DUploadToScreen bo attached %d", ureq.handle);
+	VIV2D_DBG_MSG("Viv2DUploadToScreen bo attached %d", ureq.handle);
 
 #else
 
@@ -497,8 +511,8 @@ Bool Viv2DUploadToScreen(PixmapPtr pDst,
 	char *buf = (char *) etna_bo_map(srcp->bo);
 
 	while (height--) {
-		memcpy(buf, src_buf, w * bytesPerPixel);
-//		memcpy(buf, src_buf, pitch);
+//		memcpy(buf, src_buf, w * bytesPerPixel);
+		memcpy(buf, src_buf, pitch);
 		src_buf += src_pitch;
 		buf += pitch;
 	}
@@ -528,23 +542,24 @@ Bool Viv2DUploadToScreen(PixmapPtr pDst,
 //	srcp->format.swizzle = DE_SWIZZLE_ABGR;
 
 	_Viv2DStreamSrc(v2d, srcp, 0, 0, srcp->width, srcp->height, FALSE); // tmp source
-	_Viv2DStreamDst(v2d, dst, VIVS_DE_DEST_CONFIG_COMMAND_BIT_BLT, &clip);
+	_Viv2DStreamDst(v2d, dst, VIVS_DE_DEST_CONFIG_COMMAND_BIT_BLT, NULL);
 	_Viv2DStreamBlendOp(v2d, NULL, 0, 0, FALSE, FALSE);
 	_Viv2DStreamRects(v2d, rects, 1);
 //	etna_cmd_stream_flush(v2d->stream);
 	_Viv2DStreamCommit(v2d);
 
-	VIV2D_INFO_MSG("Viv2DUploadToScreen blit done %p", src);
+//	VIV2D_DBG_MSG("Viv2DUploadToScreen blit done %p", src);
 
-#if 0
-	free(mem);
+#ifdef VIV2D_UPLOAD_USERPTR
+	if (!aligned)
+		free(mem);
 	free(srcp->bo);
 #else
 	etna_bo_del(srcp->bo);
 #endif
 //	free(srcp);
 //	pScreen->DestroyPixmap(pixmap);
-	VIV2D_INFO_MSG("Viv2DUploadToScreen exit %p", src);
+//	VIV2D_DBG_MSG("Viv2DUploadToScreen exit %p", src);
 
 	return TRUE;
 }
@@ -596,7 +611,7 @@ static inline uint32_t viv2d_scale16(uint32_t val, int bits)
 	return val >> 8;
 }
 
-static inline uint32_t viv2d_colour(Pixel pixel, int depth) {
+static inline uint32_t Viv2DColour(Pixel pixel, int depth) {
 	uint32_t colour;
 	switch (depth) {
 	case 15: /* A1R5G5B5 */
@@ -675,7 +690,7 @@ static Bool Viv2DPrepareSolid (PixmapPtr pPixmap,
 	pitch = pPixmap->devKind;
 
 	op = _Viv2DOpCreate();
-	op->fg = viv2d_colour(fg, pPixmap->drawable.depth);
+	op->fg = Viv2DColour(fg, pPixmap->drawable.depth);
 	op->mask = (uint32_t)planemask;
 	op->dst = dst;
 	v2d->op = op;
@@ -714,7 +729,13 @@ static void Viv2DSolid (PixmapPtr pPixmap, int x1, int y1, int x2, int y2) {
 //	VIV2D_DBG_MSG("Viv2DSolid %dx%d:%dx%d %d", x1, y1, x2, y2, solidOp->cur_rect);
 		_Viv2DOpAddRect(op, x1, y1, x2 - x1, y2 - y1);
 	} else {
-		VIV2D_ERR_MSG("Viv2DSolid rects overflow %d >= %d", op->cur_rect, VIV2D_MAX_RECTS);
+		_Viv2DStreamDst(v2d, op->dst, VIVS_DE_DEST_CONFIG_COMMAND_CLEAR, NULL);
+		_Viv2DStreamColor(v2d, op->fg);
+		_Viv2DStreamRects(v2d, op->rects, op->cur_rect);
+		op->cur_rect = 0;
+		_Viv2DOpAddRect(op, x1, y1, x2 - x1, y2 - y1);
+
+//		VIV2D_ERR_MSG("Viv2DSolid rects overflow %d >= %d", op->cur_rect, VIV2D_MAX_RECTS);
 	}
 }
 
@@ -871,7 +892,7 @@ static void Viv2DCopy (PixmapPtr pDstPixmap,
 	VIV2D_DBG_MSG("Viv2DCopy %p(%dx%d) -> %p(%dx%d) : %dx%d", op->src, srcX, srcY, op->dst, dstX, dstY, width, height);
 
 // new srcX,srcY group
-	if (op->prev_src_x != srcX || op->prev_src_y != srcY) {
+	if (op->prev_src_x != srcX || op->prev_src_y != srcY || op->cur_rect > VIV2D_MAX_RECTS) {
 		// flush previous rects
 		if (op->prev_src_x > -1) {
 			_Viv2DStreamRects(v2d, op->rects, op->cur_rect);
@@ -1348,7 +1369,7 @@ Viv2DComposite(PixmapPtr pDst, int srcX, int srcY, int maskX, int maskY,
 		etna_bo_del(tmp.bo);
 	} else {
 		// new srcX,srcY group
-		if (op->prev_src_x != srcX || op->prev_src_y != srcY) {
+		if (op->prev_src_x != srcX || op->prev_src_y != srcY || op->cur_rect > VIV2D_MAX_RECTS) {
 			// flush previous rects
 			if (op->prev_src_x > -1) {
 				_Viv2DStreamRects(v2d, op->rects, op->cur_rect);
@@ -1702,7 +1723,9 @@ InitViv2DEXA(ScreenPtr pScreen, ScrnInfoPtr pScrn, int fd)
 	exa->PrepareComposite = PrepareCompositeFail;
 #endif
 
-//	exa->UploadToScreen = Viv2DUploadToScreen;
+#ifdef VIV2D_UPLOAD_TO_SCREEN
+	exa->UploadToScreen = Viv2DUploadToScreen;
+#endif
 
 	if (! exaDriverInit(pScreen, exa)) {
 		ERROR_MSG("exaDriverInit failed");
