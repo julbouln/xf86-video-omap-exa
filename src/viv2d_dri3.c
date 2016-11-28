@@ -166,7 +166,7 @@ static int Viv2DDRI3FDFromPixmap(ScreenPtr pScreen, PixmapPtr pixmap,
                                  CARD16 *stride, CARD32 *size)
 {
 	Viv2DPtr v2d = Viv2DPrivFromScreen(pScreen);
-	Viv2DPixmapPrivPtr vPix = Viv2DPrivFromPixmap(pixmap);
+	Viv2DPixmapPrivPtr vPix = exaGetPixmapDriverPrivate(pixmap);
 
 	/* Only support pixmaps backed by an etnadrm bo */
 	if (!vPix || !vPix->bo)
