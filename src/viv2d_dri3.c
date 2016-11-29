@@ -32,73 +32,6 @@
 #include "viv2d.h"
 #include "viv2d_exa.h"
 
-static Viv2DPixmapPrivPtr Viv2DAllocPixmap(PixmapPtr pixmap,
-        Viv2DFormat fmt)
-{
-	Viv2DPixmapPrivPtr vpix;
-
-	vpix = calloc(1, sizeof * vpix);
-	if (vpix) {
-		vpix->width = pixmap->drawable.width;
-		vpix->height = pixmap->drawable.height;
-		vpix->pitch = pixmap->devKind;
-		vpix->format = fmt;
-	}
-	return vpix;
-}
-
-static Viv2DPixmapPrivPtr Viv2DPixmapAttachDmabuf(
-    Viv2DPtr v2d, PixmapPtr pixmap, Viv2DFormat fmt,
-    int fd)
-{
-	Viv2DPixmapPrivPtr vpix;
-	struct etna_bo *bo;
-
-	bo = etna_bo_from_dmabuf(v2d->dev, fd);
-	if (!bo) {
-		xf86Msg(X_ERROR,
-		        "Viv2D: gpu dmabuf map failed");
-
-		return NULL;
-	}
-
-	vpix = Viv2DAllocPixmap(pixmap, fmt);
-	if (!vpix) {
-		etna_bo_del(bo);
-		return NULL;
-	}
-
-	vpix->bo = bo;
-
-//	Viv2DSetPixmapPriv(pixmap, vpix);
-
-	return vpix;
-}
-
-PixmapPtr Viv2DPixmapFromDmabuf(ScreenPtr pScreen, int fd,
-                                CARD16 width, CARD16 height, CARD16 stride, CARD8 depth, CARD8 bpp)
-{
-	Viv2DPtr v2d = Viv2DPrivFromScreen(pScreen);
-	Viv2DFormat fmt;
-	PixmapPtr pixmap;
-
-	if (!Viv2DSetFormat(depth, bpp, &fmt))
-		return NullPixmap;
-
-	pixmap = pScreen->CreatePixmap(pScreen, 0, 0, depth, 0);
-	if (pixmap == NullPixmap)
-		return pixmap;
-
-	pScreen->ModifyPixmapHeader(pixmap, width, height, 0, 0, stride, NULL);
-
-	if (!Viv2DPixmapAttachDmabuf(v2d, pixmap, fmt, fd)) {
-		pScreen->DestroyPixmap(pixmap);
-		return NullPixmap;
-	}
-
-	return pixmap;
-}
-
 static Bool Viv2DDRI3Authorise(Viv2DPtr v2d, int fd)
 {
 	int ret;
@@ -158,8 +91,30 @@ static int Viv2DDRI3Open(ScreenPtr pScreen, RRProviderPtr provider, int *o)
 static PixmapPtr Viv2DDRI3PixmapFromFD(ScreenPtr pScreen, int fd,
                                        CARD16 width, CARD16 height, CARD16 stride, CARD8 depth, CARD8 bpp)
 {
-	return Viv2DPixmapFromDmabuf(pScreen, fd, width, height,
-	                             stride, depth, bpp);
+	Viv2DPtr v2d = Viv2DPrivFromScreen(pScreen);
+	Viv2DPixmapPrivPtr vpix;
+	PixmapPtr pixmap;
+
+	pixmap = pScreen->CreatePixmap(pScreen, 0, 0, depth, 0);
+	if (pixmap == NullPixmap)
+		return pixmap;
+
+	pScreen->ModifyPixmapHeader(pixmap, width, height, depth, bpp, stride, NULL);
+
+	vpix = exaGetPixmapDriverPrivate(pixmap);
+	if(vpix) {
+		if(vpix->bo)
+			etna_bo_del(vpix->bo);
+
+		vpix->bo = etna_bo_from_dmabuf(v2d->dev, fd);
+		Viv2DSetFormat(depth, bpp, &vpix->format);
+
+	} else {
+		pScreen->DestroyPixmap(pixmap);
+		return NullPixmap;
+	}
+
+	return pixmap;
 }
 
 static int Viv2DDRI3FDFromPixmap(ScreenPtr pScreen, PixmapPtr pixmap,
@@ -175,7 +130,7 @@ static int Viv2DDRI3FDFromPixmap(ScreenPtr pScreen, PixmapPtr pixmap,
 	*stride = pixmap->devKind;
 	*size = etna_bo_size(vPix->bo);
 
-	return etna_bo_to_dmabuf(v2d->dev, vPix->bo);
+	return etna_bo_dmabuf(vPix->bo);
 }
 
 static dri3_screen_info_rec etnaviv_dri3_info = {
